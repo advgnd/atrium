@@ -40,6 +40,13 @@ logback = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 ktor-serverCore = { module = "io.ktor:ktor-server-core-jvm", version.ref = "ktor" }
 ktor-serverNetty = { module = "io.ktor:ktor-server-netty-jvm", version.ref = "ktor" }
 ktor-serverTestHost = { module = "io.ktor:ktor-server-test-host-jvm", version.ref = "ktor" }
+ktor-serverSessions = { module = "io.ktor:ktor-server-sessions-jvm", version.ref = "ktor" }
+ktor-serverContentNegotiation = { module = "io.ktor:ktor-server-content-negotiation-jvm", version.ref = "ktor" }
+ktor-serializationKotlinxJson = { module = "io.ktor:ktor-serialization-kotlinx-json-jvm", version.ref = "ktor" }
+ktor-serverAuth = { module = "io.ktor:ktor-server-auth-jvm", version.ref = "ktor" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version = "3.46.0.0" }
+exposed-core = { module = "org.jetbrains.exposed:exposed-core", version = "0.53.0" }
+exposed-jdbc = { module = "org.jetbrains.exposed:exposed-jdbc", version = "0.53.0" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
