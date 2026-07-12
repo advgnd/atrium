@@ -13,6 +13,8 @@ import io.ktor.server.request.*
 import io.ktor.http.*
 import org.advgnd.atrium.database.DatabaseManager
 import org.advgnd.atrium.database.ExposedSessionStorage
+import org.advgnd.atrium.database.Prescription
+import org.advgnd.atrium.database.VisitAttachment
 import org.advgnd.atrium.model.UserSession
 import org.advgnd.atrium.security.PasswordHasher
 import kotlinx.serialization.Serializable
@@ -26,6 +28,29 @@ data class MessageResponse(val message: String)
 
 @Serializable
 data class ProfileResponse(val userId: String, val email: String, val roles: List<String>)
+
+@Serializable
+data class PatientRequest(
+    val name: String,
+    val dateOfBirth: String,
+    val gender: String,
+    val contactNumber: String,
+    val email: String,
+    val address: String
+)
+
+@Serializable
+data class VisitRequest(
+    val type: String,
+    val requiredPaymentAmount: Double,
+    val symptoms: List<String> = emptyList(),
+    val diagnoses: List<String> = emptyList(),
+    val treatments: List<String> = emptyList(),
+    val prescriptions: List<Prescription> = emptyList(),
+    val attachments: List<VisitAttachment> = emptyList(),
+    val amountPhonePe: Double = 0.0,
+    val amountCash: Double = 0.0
+)
 
 fun main() {
     embeddedServer(Netty, port = 8080, host = "0.0.0.0", module = Application::module)
@@ -60,7 +85,7 @@ fun Application.module() {
 
     routing {
         get("/") {
-            call.respondText("Ktor")
+            call.respondText(sayHello("Ktor"))
         }
 
         route("/api/v1") {
@@ -128,6 +153,101 @@ fun Application.module() {
                     } else {
                         call.respond(HttpStatusCode.Unauthorized, MessageResponse("Not authenticated"))
                     }
+                }
+
+                post("/patients") {
+                    try {
+                        val req = call.receive<PatientRequest>()
+                        val patient = dbManager.createPatient(
+                            name = req.name,
+                            dateOfBirth = req.dateOfBirth,
+                            gender = req.gender,
+                            contactNumber = req.contactNumber,
+                            email = req.email,
+                            address = req.address
+                        )
+                        call.respond(HttpStatusCode.Created, patient)
+                    } catch (e: Exception) {
+                        call.respond(HttpStatusCode.BadRequest, MessageResponse(e.message ?: "Failed to add patient"))
+                    }
+                }
+
+                get("/patients") {
+                    val patients = dbManager.getAllPatients()
+                    call.respond(HttpStatusCode.OK, patients)
+                }
+
+                get("/patients/{id}") {
+                    val id = call.parameters["id"] ?: return@get call.respond(
+                        HttpStatusCode.BadRequest,
+                        MessageResponse("Missing patient ID")
+                    )
+                    val patient = dbManager.getPatient(id)
+                    if (patient != null) {
+                        call.respond(HttpStatusCode.OK, patient)
+                    } else {
+                        call.respond(HttpStatusCode.NotFound, MessageResponse("Patient not found"))
+                    }
+                }
+
+                post("/patients/{id}/visits") {
+                    val patientId = call.parameters["id"] ?: return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        MessageResponse("Missing patient ID")
+                    )
+                    try {
+                        val req = call.receive<VisitRequest>()
+                        val userSession = call.principal<UserSession>() ?: return@post call.respond(
+                            HttpStatusCode.Unauthorized,
+                            MessageResponse("Not authenticated")
+                        )
+
+                        val patient = dbManager.getPatient(patientId)
+                        if (patient == null) {
+                            call.respond(HttpStatusCode.NotFound, MessageResponse("Patient not found"))
+                            return@post
+                        }
+
+                        val visit = dbManager.createVisit(
+                            patientId = patientId,
+                            type = req.type,
+                            requiredPaymentAmount = req.requiredPaymentAmount,
+                            symptoms = req.symptoms,
+                            diagnoses = req.diagnoses,
+                            treatments = req.treatments,
+                            prescriptions = req.prescriptions,
+                            attachments = req.attachments,
+                            amountPhonePe = req.amountPhonePe,
+                            amountCash = req.amountCash,
+                            createdBy = userSession.userId
+                        )
+                        call.respond(HttpStatusCode.Created, visit)
+                    } catch (e: Exception) {
+                        call.respond(
+                            HttpStatusCode.BadRequest,
+                            MessageResponse(e.message ?: "Failed to record clinic visit")
+                        )
+                    }
+                }
+
+                get("/patients/{id}/visits") {
+                    val patientId = call.parameters["id"] ?: return@get call.respond(
+                        HttpStatusCode.BadRequest,
+                        MessageResponse("Missing patient ID")
+                    )
+                    val patient = dbManager.getPatient(patientId)
+                    if (patient == null) {
+                        call.respond(HttpStatusCode.NotFound, MessageResponse("Patient not found"))
+                        return@get
+                    }
+
+                    val visits = dbManager.getVisitsForPatient(patientId)
+                    call.respond(HttpStatusCode.OK, visits)
+                }
+
+                get("/visits") {
+                    val visits = dbManager.getAllVisits()
+                    call.respond(HttpStatusCode.OK, visits)
                 }
             }
         }
