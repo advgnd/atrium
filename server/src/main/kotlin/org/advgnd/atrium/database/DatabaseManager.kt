@@ -4,6 +4,9 @@ import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
 import kotlinx.serialization.Serializable
+import org.advgnd.atrium.Prescription
+import org.advgnd.atrium.VisitAttachment
+import org.advgnd.atrium.PharmacyOrderItemRequest
 
 data class DbUser(
     val id: String,
@@ -22,20 +25,6 @@ data class DbPatient(
     val email: String,
     val address: String,
     val createdAt: Long
-)
-
-@Serializable
-data class Prescription(
-    val medicationName: String,
-    val dosage: String,
-    val frequency: String,
-    val duration: String
-)
-
-@Serializable
-data class VisitAttachment(
-    val url: String,
-    val mediaType: String
 )
 
 @Serializable
@@ -84,12 +73,6 @@ data class DbPharmacyOrder(
     val transactionId: String,
     val items: List<DbPharmacyOrderItem>,
     val createdAt: Long
-)
-
-@Serializable
-data class PharmacyOrderItemRequest(
-    val medicationName: String,
-    val quantity: Int
 )
 
 class DatabaseManager(private val database: Database) {

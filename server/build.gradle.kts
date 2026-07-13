@@ -1,7 +1,7 @@
 plugins {
     alias(libs.plugins.kotlinJvm)
     alias(libs.plugins.ktor)
-    kotlin("plugin.serialization") version "2.4.0"
+    alias(libs.plugins.kotlinxSerialization)
 }
 
 group = "org.advgnd.atrium"
@@ -19,6 +19,7 @@ dependencies {
     implementation(libs.ktor.serverContentNegotiation)
     implementation(libs.ktor.serializationKotlinxJson)
     implementation(libs.ktor.serverAuth)
+    implementation(libs.ktor.server.resources)
     implementation(libs.sqlite.jdbc)
     implementation(libs.exposed.core)
     implementation(libs.exposed.jdbc)
