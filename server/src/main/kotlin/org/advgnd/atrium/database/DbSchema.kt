@@ -31,6 +31,7 @@ object Patients : Table("patients") {
 
 object Visits : Table("visits") {
     val id = text("id")
+    val userFacingId = text("user_facing_id").uniqueIndex()
     val patientId = text("patient_id").references(Patients.id)
     val type = text("type")
     val requiredPaymentAmount = double("required_payment_amount")
