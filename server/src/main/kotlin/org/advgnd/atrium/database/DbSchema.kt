@@ -2,6 +2,7 @@ package org.advgnd.atrium.database
 
 import org.jetbrains.exposed.sql.Table
 import org.jetbrains.exposed.sql.ReferenceOption
+import org.advgnd.atrium.PaymentStatus
 
 object Users : Table("users") {
     val id = text("id")
@@ -37,10 +38,14 @@ object Visits : Table("visits") {
     val requiredPaymentAmount = double("required_payment_amount")
     val amountPhonePe = double("amount_phone_pe")
     val amountCash = double("amount_cash")
-    val paymentStatus = text("payment_status")
-    val transactionId = text("transaction_id")
+    val paymentStatus = enumeration<PaymentStatus>("payment_status")
     val createdBy = text("created_by").references(Users.id)
     val createdAt = long("created_at")
+    
+    val pharmacyAmountPhonePe = double("pharmacy_amount_phone_pe").default(0.0)
+    val pharmacyAmountCash = double("pharmacy_amount_cash").default(0.0)
+    val pharmacyPaymentStatus = enumeration<PaymentStatus>("pharmacy_payment_status").default(PaymentStatus.PENDING)
+    
     override val primaryKey = PrimaryKey(id)
 }
 
@@ -68,10 +73,12 @@ object VisitTreatments : Table("visit_treatments") {
 object VisitPrescriptions : Table("visit_prescriptions") {
     val id = text("id")
     val visitId = text("visit_id").references(Visits.id, onDelete = ReferenceOption.CASCADE)
-    val medicationName = text("medication_name")
+    val medicationId = text("medication_id").references(Inventory.id)
+    val quantity = integer("quantity")
     val dosage = text("dosage")
     val frequency = text("frequency")
     val duration = text("duration")
+    val dispensed = bool("dispensed").default(false)
     override val primaryKey = PrimaryKey(id)
 }
 
@@ -89,26 +96,5 @@ object Inventory : Table("inventory") {
     val quantity = integer("quantity")
     val pricePerUnit = double("price_per_unit")
     val updatedAt = long("updated_at")
-    override val primaryKey = PrimaryKey(id)
-}
-
-object PharmacyOrders : Table("pharmacy_orders") {
-    val id = text("id")
-    val visitId = text("visit_id").references(Visits.id, onDelete = ReferenceOption.CASCADE)
-    val status = text("status")
-    val amountPhonePe = double("amount_phone_pe")
-    val amountCash = double("amount_cash")
-    val paymentStatus = text("payment_status")
-    val transactionId = text("transaction_id")
-    val createdAt = long("created_at")
-    override val primaryKey = PrimaryKey(id)
-}
-
-object PharmacyOrderItems : Table("pharmacy_order_items") {
-    val id = text("id")
-    val orderId = text("order_id").references(PharmacyOrders.id, onDelete = ReferenceOption.CASCADE)
-    val medicationName = text("medication_name")
-    val quantity = integer("quantity")
-    val pricePerUnit = double("price_per_unit")
     override val primaryKey = PrimaryKey(id)
 }

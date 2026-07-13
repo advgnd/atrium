@@ -17,10 +17,8 @@ import io.ktor.server.resources.post
 import io.ktor.server.resources.get
 import org.advgnd.atrium.database.DatabaseManager
 import org.advgnd.atrium.database.ExposedSessionStorage
-import org.advgnd.atrium.*
 import org.advgnd.atrium.model.UserSession
 import org.advgnd.atrium.security.PasswordHasher
-import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.sql.Database
 
 fun main() {
@@ -175,10 +173,9 @@ fun Application.module() {
                         treatments = req.treatments,
                         prescriptions = req.prescriptions,
                         attachments = req.attachments,
-                        amountPhonePe = req.amountPhonePe,
-                        amountCash = req.amountCash,
                         createdBy = userSession.userId
                     )
+
                     call.respond(HttpStatusCode.Created, visit)
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.BadRequest, MessageResponse(e.message ?: "Failed to record clinic visit"))
@@ -220,36 +217,32 @@ fun Application.module() {
                 call.respond(HttpStatusCode.OK, inventory)
             }
 
-            post<ApiV1.VisitPharmacyOrders> { route ->
+            post<ApiV1.VisitPay> { route ->
                 try {
-                    val req = call.receive<PharmacyOrderRequest>()
-                    val visit = dbManager.getVisit(route.id)
-                    if (visit == null) {
-                        call.respond(HttpStatusCode.NotFound, MessageResponse("Visit not found"))
-                        return@post
-                    }
-
-                    val order = dbManager.createPharmacyOrder(
+                    val req = call.receive<PaymentRequest>()
+                    val visit = dbManager.payVisit(
                         visitId = route.id,
-                        items = req.items,
                         amountPhonePe = req.amountPhonePe,
                         amountCash = req.amountCash
                     )
-                    call.respond(HttpStatusCode.Created, order)
+                    call.respond(HttpStatusCode.OK, visit)
                 } catch (e: Exception) {
-                    call.respond(HttpStatusCode.BadRequest, MessageResponse(e.message ?: "Failed to create pharmacy order"))
+                    call.respond(HttpStatusCode.BadRequest, MessageResponse(e.message ?: "Payment failed"))
                 }
             }
 
-            get<ApiV1.VisitPharmacyOrders> { route ->
-                val visit = dbManager.getVisit(route.id)
-                if (visit == null) {
-                    call.respond(HttpStatusCode.NotFound, MessageResponse("Visit not found"))
-                    return@get
+            post<ApiV1.VisitDispense> { route ->
+                try {
+                    val req = call.receive<PaymentRequest>()
+                    val visit = dbManager.dispensePharmacy(
+                        visitId = route.id,
+                        amountPhonePe = req.amountPhonePe,
+                        amountCash = req.amountCash
+                    )
+                    call.respond(HttpStatusCode.OK, visit)
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.BadRequest, MessageResponse(e.message ?: "Dispensing failed"))
                 }
-
-                val orders = dbManager.getPharmacyOrdersForVisit(route.id)
-                call.respond(HttpStatusCode.OK, orders)
             }
         }
     }

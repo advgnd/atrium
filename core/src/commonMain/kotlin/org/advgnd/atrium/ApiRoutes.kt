@@ -47,6 +47,10 @@ class ApiV1 {
     class Inventory(val parent: ApiV1 = ApiV1())
 
     @Serializable
-    @Resource("visits/{id}/pharmacy-orders")
-    class VisitPharmacyOrders(val parent: ApiV1 = ApiV1(), val id: String)
+    @Resource("visits/{id}/pay-visit")
+    class VisitPay(val parent: ApiV1 = ApiV1(), val id: String)
+
+    @Serializable
+    @Resource("visits/{id}/dispense")
+    class VisitDispense(val parent: ApiV1 = ApiV1(), val id: String)
 }

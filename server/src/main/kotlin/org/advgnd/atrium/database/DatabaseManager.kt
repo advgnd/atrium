@@ -8,7 +8,7 @@ import java.time.ZoneId
 import kotlinx.serialization.Serializable
 import org.advgnd.atrium.Prescription
 import org.advgnd.atrium.VisitAttachment
-import org.advgnd.atrium.PharmacyOrderItemRequest
+import org.advgnd.atrium.PaymentStatus
 
 data class DbUser(
     val id: String,
@@ -37,15 +37,18 @@ data class DbVisit(
     val requiredPaymentAmount: Double,
     val amountPhonePe: Double,
     val amountCash: Double,
-    val paymentStatus: String,
-    val transactionId: String,
+    val paymentStatus: PaymentStatus,
     val symptoms: List<String>,
     val diagnoses: List<String>,
     val treatments: List<String>,
     val prescriptions: List<Prescription>,
     val attachments: List<VisitAttachment>,
     val createdBy: String,
-    val createdAt: Long
+    val createdAt: Long,
+    val pharmacyRequiredAmount: Double,
+    val pharmacyAmountPhonePe: Double,
+    val pharmacyAmountCash: Double,
+    val pharmacyPaymentStatus: PaymentStatus
 )
 
 @Serializable
@@ -57,26 +60,6 @@ data class DbInventoryItem(
     val updatedAt: Long
 )
 
-@Serializable
-data class DbPharmacyOrderItem(
-    val medicationName: String,
-    val quantity: Int,
-    val pricePerUnit: Double
-)
-
-@Serializable
-data class DbPharmacyOrder(
-    val id: String,
-    val visitId: String,
-    val status: String,
-    val amountPhonePe: Double,
-    val amountCash: Double,
-    val paymentStatus: String,
-    val transactionId: String,
-    val items: List<DbPharmacyOrderItem>,
-    val createdAt: Long
-)
-
 class DatabaseManager(private val database: Database) {
 
     init {
@@ -85,7 +68,7 @@ class DatabaseManager(private val database: Database) {
                 Users, Patients, Visits,
                 VisitSymptoms, VisitDiagnoses, VisitTreatments,
                 VisitPrescriptions, VisitAttachments,
-                Inventory, PharmacyOrders, PharmacyOrderItems
+                Inventory
             )
         }
     }
@@ -212,15 +195,10 @@ class DatabaseManager(private val database: Database) {
         treatments: List<String>,
         prescriptions: List<Prescription>,
         attachments: List<VisitAttachment>,
-        amountPhonePe: Double,
-        amountCash: Double,
         createdBy: String
     ): DbVisit {
         val visitId = UUID.randomUUID().toString()
-        val transactionId = "TXN-" + UUID.randomUUID().toString().take(8).uppercase()
         val createdAt = System.currentTimeMillis()
-        val totalPaid = amountPhonePe + amountCash
-        val paymentStatus = if (totalPaid >= requiredPaymentAmount) "PAID" else "PENDING"
 
         val userFacingId = transaction(database) {
             val patientRow = Patients.selectAll().where { Patients.id eq patientId }
@@ -234,13 +212,16 @@ class DatabaseManager(private val database: Database) {
                 it[Visits.patientId] = patientUuid
                 it[Visits.type] = type
                 it[Visits.requiredPaymentAmount] = requiredPaymentAmount
-                it[Visits.amountPhonePe] = amountPhonePe
-                it[Visits.amountCash] = amountCash
-                it[Visits.paymentStatus] = paymentStatus
-                it[Visits.transactionId] = transactionId
+                it[Visits.amountPhonePe] = 0.0
+                it[Visits.amountCash] = 0.0
+                it[Visits.paymentStatus] = PaymentStatus.PENDING
                 it[Visits.createdBy] = createdBy
                 it[Visits.createdAt] = createdAt
+                it[Visits.pharmacyAmountPhonePe] = 0.0
+                it[Visits.pharmacyAmountCash] = 0.0
+                it[Visits.pharmacyPaymentStatus] = PaymentStatus.PENDING
             }
+
 
             symptoms.forEach { sym ->
                 VisitSymptoms.insert {
@@ -267,13 +248,18 @@ class DatabaseManager(private val database: Database) {
             }
 
             prescriptions.forEach { presc ->
+                val invRow = Inventory.selectAll().where { Inventory.id eq presc.medicationId }
+                    .singleOrNull() ?: throw IllegalArgumentException("Medication ID ${presc.medicationId} not found in inventory")
+
                 VisitPrescriptions.insert {
                     it[VisitPrescriptions.id] = UUID.randomUUID().toString()
                     it[VisitPrescriptions.visitId] = visitId
-                    it[VisitPrescriptions.medicationName] = presc.medicationName
+                    it[VisitPrescriptions.medicationId] = presc.medicationId
+                    it[VisitPrescriptions.quantity] = presc.quantity
                     it[VisitPrescriptions.dosage] = presc.dosage
                     it[VisitPrescriptions.frequency] = presc.frequency
                     it[VisitPrescriptions.duration] = presc.duration
+                    it[VisitPrescriptions.dispensed] = false
                 }
             }
 
@@ -288,23 +274,7 @@ class DatabaseManager(private val database: Database) {
             ufid
         }
 
-        return DbVisit(
-            id = userFacingId,
-            patientId = patientId,
-            type = type,
-            requiredPaymentAmount = requiredPaymentAmount,
-            amountPhonePe = amountPhonePe,
-            amountCash = amountCash,
-            paymentStatus = paymentStatus,
-            transactionId = transactionId,
-            symptoms = symptoms,
-            diagnoses = diagnoses,
-            treatments = treatments,
-            prescriptions = prescriptions,
-            attachments = attachments,
-            createdBy = createdBy,
-            createdAt = createdAt
-        )
+        return getVisit(visitId) ?: throw IllegalStateException("Visit creation failed")
     }
 
     fun getVisitsForPatient(patientId: String): List<DbVisit> {
@@ -317,51 +287,7 @@ class DatabaseManager(private val database: Database) {
                 .orderBy(Visits.createdAt to SortOrder.DESC)
                 .map { row ->
                     val visitId = row[Visits.id]
-
-                    val symptoms = VisitSymptoms.selectAll().where { VisitSymptoms.visitId eq visitId }
-                        .map { it[VisitSymptoms.symptom] }
-
-                    val diagnoses = VisitDiagnoses.selectAll().where { VisitDiagnoses.visitId eq visitId }
-                        .map { it[VisitDiagnoses.diagnosis] }
-
-                    val treatments = VisitTreatments.selectAll().where { VisitTreatments.visitId eq visitId }
-                        .map { it[VisitTreatments.treatment] }
-
-                    val prescriptions = VisitPrescriptions.selectAll().where { VisitPrescriptions.visitId eq visitId }
-                        .map {
-                            Prescription(
-                                medicationName = it[VisitPrescriptions.medicationName],
-                                dosage = it[VisitPrescriptions.dosage],
-                                frequency = it[VisitPrescriptions.frequency],
-                                duration = it[VisitPrescriptions.duration]
-                            )
-                        }
-
-                    val attachments = VisitAttachments.selectAll().where { VisitAttachments.visitId eq visitId }
-                        .map {
-                            VisitAttachment(
-                                url = it[VisitAttachments.url],
-                                mediaType = it[VisitAttachments.mediaType]
-                            )
-                        }
-
-                    DbVisit(
-                        id = row[Visits.userFacingId],
-                        patientId = patientId,
-                        type = row[Visits.type],
-                        requiredPaymentAmount = row[Visits.requiredPaymentAmount],
-                        amountPhonePe = row[Visits.amountPhonePe],
-                        amountCash = row[Visits.amountCash],
-                        paymentStatus = row[Visits.paymentStatus],
-                        transactionId = row[Visits.transactionId],
-                        symptoms = symptoms,
-                        diagnoses = diagnoses,
-                        treatments = treatments,
-                        prescriptions = prescriptions,
-                        attachments = attachments,
-                        createdBy = row[Visits.createdBy],
-                        createdAt = row[Visits.createdAt]
-                    )
+                    mapRowToDbVisit(row, visitId, patientId)
                 }
         }
     }
@@ -378,50 +304,7 @@ class DatabaseManager(private val database: Database) {
             val patientRow = Patients.selectAll().where { Patients.id eq visitRow[Visits.patientId] }.singleOrNull()
             val patientUuid = patientRow?.get(Patients.id) ?: ""
 
-            val symptoms = VisitSymptoms.selectAll().where { VisitSymptoms.visitId eq visitId }
-                .map { it[VisitSymptoms.symptom] }
-
-            val diagnoses = VisitDiagnoses.selectAll().where { VisitDiagnoses.visitId eq visitId }
-                .map { it[VisitDiagnoses.diagnosis] }
-
-            val treatments = VisitTreatments.selectAll().where { VisitTreatments.visitId eq visitId }
-                .map { it[VisitTreatments.treatment] }
-
-            val prescriptions = VisitPrescriptions.selectAll().where { VisitPrescriptions.visitId eq visitId }
-                .map {
-                    Prescription(
-                        medicationName = it[VisitPrescriptions.medicationName],
-                        dosage = it[VisitPrescriptions.dosage],
-                        frequency = it[VisitPrescriptions.frequency],
-                        duration = it[VisitPrescriptions.duration]
-                    )
-                }
-
-            val attachments = VisitAttachments.selectAll().where { VisitAttachments.visitId eq visitId }
-                .map {
-                    VisitAttachment(
-                        url = it[VisitAttachments.url],
-                        mediaType = it[VisitAttachments.mediaType]
-                    )
-                }
-
-            DbVisit(
-                id = visitRow[Visits.userFacingId],
-                patientId = patientUuid,
-                type = visitRow[Visits.type],
-                requiredPaymentAmount = visitRow[Visits.requiredPaymentAmount],
-                amountPhonePe = visitRow[Visits.amountPhonePe],
-                amountCash = visitRow[Visits.amountCash],
-                paymentStatus = visitRow[Visits.paymentStatus],
-                transactionId = visitRow[Visits.transactionId],
-                symptoms = symptoms,
-                diagnoses = diagnoses,
-                treatments = treatments,
-                prescriptions = prescriptions,
-                attachments = attachments,
-                createdBy = visitRow[Visits.createdBy],
-                createdAt = visitRow[Visits.createdAt]
-            )
+            mapRowToDbVisit(visitRow, visitId, patientUuid)
         }
     }
 
@@ -431,57 +314,68 @@ class DatabaseManager(private val database: Database) {
                 .orderBy(Visits.createdAt to SortOrder.DESC)
                 .map { row ->
                     val visitId = row[Visits.id]
-                    
-                    val patientRow = Patients.selectAll().where { Patients.id eq row[Visits.patientId] }
-                        .singleOrNull()
+                    val patientRow = Patients.selectAll().where { Patients.id eq row[Visits.patientId] }.singleOrNull()
                     val patientUuid = patientRow?.get(Patients.id) ?: ""
-
-                    val symptoms = VisitSymptoms.selectAll().where { VisitSymptoms.visitId eq visitId }
-                        .map { it[VisitSymptoms.symptom] }
-
-                    val diagnoses = VisitDiagnoses.selectAll().where { VisitDiagnoses.visitId eq visitId }
-                        .map { it[VisitDiagnoses.diagnosis] }
-
-                    val treatments = VisitTreatments.selectAll().where { VisitTreatments.visitId eq visitId }
-                        .map { it[VisitTreatments.treatment] }
-
-                    val prescriptions = VisitPrescriptions.selectAll().where { VisitPrescriptions.visitId eq visitId }
-                        .map {
-                            Prescription(
-                                medicationName = it[VisitPrescriptions.medicationName],
-                                dosage = it[VisitPrescriptions.dosage],
-                                frequency = it[VisitPrescriptions.frequency],
-                                duration = it[VisitPrescriptions.duration]
-                            )
-                        }
-
-                    val attachments = VisitAttachments.selectAll().where { VisitAttachments.visitId eq visitId }
-                        .map {
-                            VisitAttachment(
-                                url = it[VisitAttachments.url],
-                                mediaType = it[VisitAttachments.mediaType]
-                            )
-                        }
-
-                    DbVisit(
-                        id = row[Visits.userFacingId],
-                        patientId = patientUuid,
-                        type = row[Visits.type],
-                        requiredPaymentAmount = row[Visits.requiredPaymentAmount],
-                        amountPhonePe = row[Visits.amountPhonePe],
-                        amountCash = row[Visits.amountCash],
-                        paymentStatus = row[Visits.paymentStatus],
-                        transactionId = row[Visits.transactionId],
-                        symptoms = symptoms,
-                        diagnoses = diagnoses,
-                        treatments = treatments,
-                        prescriptions = prescriptions,
-                        attachments = attachments,
-                        createdBy = row[Visits.createdBy],
-                        createdAt = row[Visits.createdAt]
-                    )
+                    mapRowToDbVisit(row, visitId, patientUuid)
                 }
         }
+    }
+
+    private fun mapRowToDbVisit(row: ResultRow, visitId: String, patientId: String): DbVisit {
+        val symptoms = VisitSymptoms.selectAll().where { VisitSymptoms.visitId eq visitId }
+            .map { it[VisitSymptoms.symptom] }
+
+        val diagnoses = VisitDiagnoses.selectAll().where { VisitDiagnoses.visitId eq visitId }
+            .map { it[VisitDiagnoses.diagnosis] }
+
+        val treatments = VisitTreatments.selectAll().where { VisitTreatments.visitId eq visitId }
+            .map { it[VisitTreatments.treatment] }
+
+        val prescriptions = VisitPrescriptions.selectAll().where { VisitPrescriptions.visitId eq visitId }
+            .map {
+                Prescription(
+                    medicationId = it[VisitPrescriptions.medicationId],
+                    quantity = it[VisitPrescriptions.quantity],
+                    dosage = it[VisitPrescriptions.dosage],
+                    frequency = it[VisitPrescriptions.frequency],
+                    duration = it[VisitPrescriptions.duration],
+                    dispensed = it[VisitPrescriptions.dispensed]
+                )
+            }
+
+        val attachments = VisitAttachments.selectAll().where { VisitAttachments.visitId eq visitId }
+            .map {
+                VisitAttachment(
+                    url = it[VisitAttachments.url],
+                    mediaType = it[VisitAttachments.mediaType]
+                )
+            }
+
+        val pharmacyRequired = VisitPrescriptions.join(Inventory, JoinType.INNER, additionalConstraint = { VisitPrescriptions.medicationId eq Inventory.id })
+            .select(VisitPrescriptions.quantity, Inventory.pricePerUnit)
+            .where { VisitPrescriptions.visitId eq visitId }
+            .sumOf { it[VisitPrescriptions.quantity] * it[Inventory.pricePerUnit] }
+
+        return DbVisit(
+            id = row[Visits.userFacingId],
+            patientId = patientId,
+            type = row[Visits.type],
+            requiredPaymentAmount = row[Visits.requiredPaymentAmount],
+            amountPhonePe = row[Visits.amountPhonePe],
+            amountCash = row[Visits.amountCash],
+            paymentStatus = row[Visits.paymentStatus],
+            symptoms = symptoms,
+            diagnoses = diagnoses,
+            treatments = treatments,
+            prescriptions = prescriptions,
+            attachments = attachments,
+            createdBy = row[Visits.createdBy],
+            createdAt = row[Visits.createdAt],
+            pharmacyRequiredAmount = pharmacyRequired,
+            pharmacyAmountPhonePe = row[Visits.pharmacyAmountPhonePe],
+            pharmacyAmountCash = row[Visits.pharmacyAmountCash],
+            pharmacyPaymentStatus = row[Visits.pharmacyPaymentStatus]
+        )
     }
 
     fun updateInventoryItem(
@@ -537,16 +431,7 @@ class DatabaseManager(private val database: Database) {
         }
     }
 
-    fun createPharmacyOrder(
-        visitId: String,
-        items: List<PharmacyOrderItemRequest>,
-        amountPhonePe: Double,
-        amountCash: Double
-    ): DbPharmacyOrder {
-        val orderId = UUID.randomUUID().toString()
-        val transactionId = "TXN-" + UUID.randomUUID().toString().take(8).uppercase()
-        val createdAt = System.currentTimeMillis()
-
+    fun payVisit(visitId: String, amountPhonePe: Double, amountCash: Double): DbVisit {
         return transaction(database) {
             val startMillis = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toEpochSecond() * 1000
             val visitRow = Visits.selectAll().where {
@@ -555,104 +440,74 @@ class DatabaseManager(private val database: Database) {
             }.singleOrNull() ?: throw IllegalArgumentException("Visit not found")
 
             val visitUuid = visitRow[Visits.id]
-            val visitUfid = visitRow[Visits.userFacingId]
+            val newPhonePe = visitRow[Visits.amountPhonePe] + amountPhonePe
+            val newCash = visitRow[Visits.amountCash] + amountCash
+            val totalPaid = newPhonePe + newCash
+            val status = if (totalPaid >= visitRow[Visits.requiredPaymentAmount]) PaymentStatus.PAID else PaymentStatus.PENDING
 
-            val processedItems = items.map { req ->
-                val invItem = Inventory.selectAll().where { Inventory.medicationName eq req.medicationName }
-                    .singleOrNull() ?: throw IllegalArgumentException("Medication ${req.medicationName} not found in inventory")
-                
-                val currentQty = invItem[Inventory.quantity]
-                if (currentQty < req.quantity) {
-                    throw IllegalArgumentException("Insufficient stock for ${req.medicationName}. Available: $currentQty, Requested: ${req.quantity}")
-                }
-
-                Inventory.update({ Inventory.medicationName eq req.medicationName }) {
-                    it[Inventory.quantity] = currentQty - req.quantity
-                    it[Inventory.updatedAt] = createdAt
-                }
-
-                DbPharmacyOrderItem(
-                    medicationName = req.medicationName,
-                    quantity = req.quantity,
-                    pricePerUnit = invItem[Inventory.pricePerUnit]
-                )
+            Visits.update({ Visits.id eq visitUuid }) {
+                it[Visits.amountPhonePe] = newPhonePe
+                it[Visits.amountCash] = newCash
+                it[Visits.paymentStatus] = status
             }
-
-            val requiredPayment = processedItems.sumOf { it.quantity * it.pricePerUnit }
-            val totalPaid = amountPhonePe + amountCash
-            val paymentStatus = if (totalPaid >= requiredPayment) "PAID" else "PENDING"
-
-            PharmacyOrders.insert {
-                it[PharmacyOrders.id] = orderId
-                it[PharmacyOrders.visitId] = visitUuid
-                it[PharmacyOrders.status] = "DISPENSED"
-                it[PharmacyOrders.amountPhonePe] = amountPhonePe
-                it[PharmacyOrders.amountCash] = amountCash
-                it[PharmacyOrders.paymentStatus] = paymentStatus
-                it[PharmacyOrders.transactionId] = transactionId
-                it[PharmacyOrders.createdAt] = createdAt
-            }
-
-            processedItems.forEach { item ->
-                PharmacyOrderItems.insert {
-                    it[PharmacyOrderItems.id] = UUID.randomUUID().toString()
-                    it[PharmacyOrderItems.orderId] = orderId
-                    it[PharmacyOrderItems.medicationName] = item.medicationName
-                    it[PharmacyOrderItems.quantity] = item.quantity
-                    it[PharmacyOrderItems.pricePerUnit] = item.pricePerUnit
-                }
-            }
-
-            DbPharmacyOrder(
-                id = orderId,
-                visitId = visitUfid,
-                status = "DISPENSED",
-                amountPhonePe = amountPhonePe,
-                amountCash = amountCash,
-                paymentStatus = paymentStatus,
-                transactionId = transactionId,
-                items = processedItems,
-                createdAt = createdAt
-            )
+            mapRowToDbVisit(Visits.selectAll().where { Visits.id eq visitUuid }.single(), visitUuid, visitRow[Visits.patientId])
         }
     }
 
-    fun getPharmacyOrdersForVisit(visitId: String): List<DbPharmacyOrder> {
+    fun dispensePharmacy(visitId: String, amountPhonePe: Double, amountCash: Double): DbVisit {
         return transaction(database) {
             val startMillis = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toEpochSecond() * 1000
             val visitRow = Visits.selectAll().where {
                 (Visits.id eq visitId) or
                 ((Visits.userFacingId eq visitId) and (Visits.createdAt greaterEq startMillis))
-            }.singleOrNull() ?: return@transaction emptyList()
+            }.singleOrNull() ?: throw IllegalArgumentException("Visit not found")
 
             val visitUuid = visitRow[Visits.id]
-            val visitUfid = visitRow[Visits.userFacingId]
 
-            PharmacyOrders.selectAll().where { PharmacyOrders.visitId eq visitUuid }
-                .orderBy(PharmacyOrders.createdAt to SortOrder.DESC)
-                .map { row ->
-                    val orderId = row[PharmacyOrders.id]
-                    val items = PharmacyOrderItems.selectAll().where { PharmacyOrderItems.orderId eq orderId }
-                        .map {
-                            DbPharmacyOrderItem(
-                                medicationName = it[PharmacyOrderItems.medicationName],
-                                quantity = it[PharmacyOrderItems.quantity],
-                                pricePerUnit = it[PharmacyOrderItems.pricePerUnit]
-                            )
-                        }
+            val unDispensedPrescriptions = VisitPrescriptions.selectAll().where {
+                (VisitPrescriptions.visitId eq visitUuid) and (VisitPrescriptions.dispensed eq false)
+            }.toList()
 
-                    DbPharmacyOrder(
-                        id = orderId,
-                        visitId = visitUfid,
-                        status = row[PharmacyOrders.status],
-                        amountPhonePe = row[PharmacyOrders.amountPhonePe],
-                        amountCash = row[PharmacyOrders.amountCash],
-                        paymentStatus = row[PharmacyOrders.paymentStatus],
-                        transactionId = row[PharmacyOrders.transactionId],
-                        items = items,
-                        createdAt = row[PharmacyOrders.createdAt]
-                    )
+            unDispensedPrescriptions.forEach { prescRow ->
+                val medId = prescRow[VisitPrescriptions.medicationId]
+                val qty = prescRow[VisitPrescriptions.quantity]
+                
+                val invItem = Inventory.selectAll().where { Inventory.id eq medId }.singleOrNull()
+                    ?: throw IllegalArgumentException("Medication ID $medId not found in inventory")
+                
+                val currentQty = invItem[Inventory.quantity]
+                if (currentQty < qty) {
+                    throw IllegalArgumentException("Insufficient stock for ${invItem[Inventory.medicationName]}. Available: $currentQty, Requested: $qty")
                 }
+
+                Inventory.update({ Inventory.id eq medId }) {
+                    it[Inventory.quantity] = currentQty - qty
+                    it[Inventory.updatedAt] = System.currentTimeMillis()
+                }
+
+                VisitPrescriptions.update({ VisitPrescriptions.id eq prescRow[VisitPrescriptions.id] }) {
+                    it[VisitPrescriptions.dispensed] = true
+                }
+            }
+
+            val newPhonePe = visitRow[Visits.pharmacyAmountPhonePe] + amountPhonePe
+            val newCash = visitRow[Visits.pharmacyAmountCash] + amountCash
+            val totalPaid = newPhonePe + newCash
+
+            val pharmacyRequired = VisitPrescriptions.join(Inventory, JoinType.INNER, additionalConstraint = { VisitPrescriptions.medicationId eq Inventory.id })
+                .select(VisitPrescriptions.quantity, Inventory.pricePerUnit)
+                .where { VisitPrescriptions.visitId eq visitUuid }
+                .sumOf { it[VisitPrescriptions.quantity] * it[Inventory.pricePerUnit] }
+
+            val status = if (totalPaid >= pharmacyRequired) PaymentStatus.PAID else PaymentStatus.PENDING
+
+            Visits.update({ Visits.id eq visitUuid }) {
+                it[Visits.pharmacyAmountPhonePe] = newPhonePe
+                it[Visits.pharmacyAmountCash] = newCash
+                it[Visits.pharmacyPaymentStatus] = status
+            }
+
+            mapRowToDbVisit(Visits.selectAll().where { Visits.id eq visitUuid }.single(), visitUuid, visitRow[Visits.patientId])
         }
     }
 }

@@ -3,6 +3,11 @@ package org.advgnd.atrium
 import kotlinx.serialization.Serializable
 
 @Serializable
+enum class PaymentStatus {
+    PAID, PENDING
+}
+
+@Serializable
 data class AuthRequest(val email: String, val password: String)
 
 @Serializable
@@ -23,10 +28,12 @@ data class PatientRequest(
 
 @Serializable
 data class Prescription(
-    val medicationName: String,
+    val medicationId: String,
+    val quantity: Int,
     val dosage: String,
     val frequency: String,
-    val duration: String
+    val duration: String,
+    val dispensed: Boolean = false
 )
 
 @Serializable
@@ -43,10 +50,9 @@ data class VisitRequest(
     val diagnoses: List<String> = emptyList(),
     val treatments: List<String> = emptyList(),
     val prescriptions: List<Prescription> = emptyList(),
-    val attachments: List<VisitAttachment> = emptyList(),
-    val amountPhonePe: Double = 0.0,
-    val amountCash: Double = 0.0
+    val attachments: List<VisitAttachment> = emptyList()
 )
+
 
 @Serializable
 data class InventoryUpdateRequest(
@@ -56,14 +62,7 @@ data class InventoryUpdateRequest(
 )
 
 @Serializable
-data class PharmacyOrderItemRequest(
-    val medicationName: String,
-    val quantity: Int
-)
-
-@Serializable
-data class PharmacyOrderRequest(
-    val items: List<PharmacyOrderItemRequest>,
-    val amountPhonePe: Double = 0.0,
-    val amountCash: Double = 0.0
+data class PaymentRequest(
+    val amountPhonePe: Double,
+    val amountCash: Double
 )
