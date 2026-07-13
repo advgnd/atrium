@@ -81,3 +81,33 @@ object VisitAttachments : Table("visit_attachments") {
     val mediaType = text("media_type")
     override val primaryKey = PrimaryKey(id)
 }
+
+object Inventory : Table("inventory") {
+    val id = text("id")
+    val medicationName = text("medication_name").uniqueIndex()
+    val quantity = integer("quantity")
+    val pricePerUnit = double("price_per_unit")
+    val updatedAt = long("updated_at")
+    override val primaryKey = PrimaryKey(id)
+}
+
+object PharmacyOrders : Table("pharmacy_orders") {
+    val id = text("id")
+    val visitId = text("visit_id").references(Visits.id, onDelete = ReferenceOption.CASCADE)
+    val status = text("status")
+    val amountPhonePe = double("amount_phone_pe")
+    val amountCash = double("amount_cash")
+    val paymentStatus = text("payment_status")
+    val transactionId = text("transaction_id")
+    val createdAt = long("created_at")
+    override val primaryKey = PrimaryKey(id)
+}
+
+object PharmacyOrderItems : Table("pharmacy_order_items") {
+    val id = text("id")
+    val orderId = text("order_id").references(PharmacyOrders.id, onDelete = ReferenceOption.CASCADE)
+    val medicationName = text("medication_name")
+    val quantity = integer("quantity")
+    val pricePerUnit = double("price_per_unit")
+    override val primaryKey = PrimaryKey(id)
+}

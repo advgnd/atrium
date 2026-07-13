@@ -15,6 +15,7 @@ import org.advgnd.atrium.database.DatabaseManager
 import org.advgnd.atrium.database.ExposedSessionStorage
 import org.advgnd.atrium.database.Prescription
 import org.advgnd.atrium.database.VisitAttachment
+import org.advgnd.atrium.database.PharmacyOrderItemRequest
 import org.advgnd.atrium.model.UserSession
 import org.advgnd.atrium.security.PasswordHasher
 import kotlinx.serialization.Serializable
@@ -48,6 +49,20 @@ data class VisitRequest(
     val treatments: List<String> = emptyList(),
     val prescriptions: List<Prescription> = emptyList(),
     val attachments: List<VisitAttachment> = emptyList(),
+    val amountPhonePe: Double = 0.0,
+    val amountCash: Double = 0.0
+)
+
+@Serializable
+data class InventoryUpdateRequest(
+    val medicationName: String,
+    val quantity: Int,
+    val pricePerUnit: Double
+)
+
+@Serializable
+data class PharmacyOrderRequest(
+    val items: List<PharmacyOrderItemRequest>,
     val amountPhonePe: Double = 0.0,
     val amountCash: Double = 0.0
 )
@@ -105,7 +120,7 @@ fun Application.module() {
 
                     val passwordHash = PasswordHasher.hash(req.password)
                     dbManager.createUser(req.email, passwordHash, listOf("USER"))
-
+                    
                     call.respond(HttpStatusCode.Created, MessageResponse("User registered successfully"))
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.BadRequest, MessageResponse(e.message ?: "Registration failed"))
@@ -126,7 +141,7 @@ fun Application.module() {
                         email = user.email,
                         roles = user.roles
                     )
-
+                    
                     call.sessions.set(userSession)
                     call.respond(HttpStatusCode.OK, MessageResponse("Login successful"))
                 } catch (e: Exception) {
@@ -143,13 +158,11 @@ fun Application.module() {
                 get("/user/profile") {
                     val session = call.principal<UserSession>()
                     if (session != null) {
-                        call.respond(
-                            HttpStatusCode.OK, ProfileResponse(
-                                userId = session.userId,
-                                email = session.email,
-                                roles = session.roles
-                            )
-                        )
+                        call.respond(HttpStatusCode.OK, ProfileResponse(
+                            userId = session.userId,
+                            email = session.email,
+                            roles = session.roles
+                        ))
                     } else {
                         call.respond(HttpStatusCode.Unauthorized, MessageResponse("Not authenticated"))
                     }
@@ -178,10 +191,7 @@ fun Application.module() {
                 }
 
                 get("/patients/{id}") {
-                    val id = call.parameters["id"] ?: return@get call.respond(
-                        HttpStatusCode.BadRequest,
-                        MessageResponse("Missing patient ID")
-                    )
+                    val id = call.parameters["id"] ?: return@get call.respond(HttpStatusCode.BadRequest, MessageResponse("Missing patient ID"))
                     val patient = dbManager.getPatient(id)
                     if (patient != null) {
                         call.respond(HttpStatusCode.OK, patient)
@@ -191,17 +201,11 @@ fun Application.module() {
                 }
 
                 post("/patients/{id}/visits") {
-                    val patientId = call.parameters["id"] ?: return@post call.respond(
-                        HttpStatusCode.BadRequest,
-                        MessageResponse("Missing patient ID")
-                    )
+                    val patientId = call.parameters["id"] ?: return@post call.respond(HttpStatusCode.BadRequest, MessageResponse("Missing patient ID"))
                     try {
                         val req = call.receive<VisitRequest>()
-                        val userSession = call.principal<UserSession>() ?: return@post call.respond(
-                            HttpStatusCode.Unauthorized,
-                            MessageResponse("Not authenticated")
-                        )
-
+                        val userSession = call.principal<UserSession>() ?: return@post call.respond(HttpStatusCode.Unauthorized, MessageResponse("Not authenticated"))
+                        
                         val patient = dbManager.getPatient(patientId)
                         if (patient == null) {
                             call.respond(HttpStatusCode.NotFound, MessageResponse("Patient not found"))
@@ -223,24 +227,18 @@ fun Application.module() {
                         )
                         call.respond(HttpStatusCode.Created, visit)
                     } catch (e: Exception) {
-                        call.respond(
-                            HttpStatusCode.BadRequest,
-                            MessageResponse(e.message ?: "Failed to record clinic visit")
-                        )
+                        call.respond(HttpStatusCode.BadRequest, MessageResponse(e.message ?: "Failed to record clinic visit"))
                     }
                 }
 
                 get("/patients/{id}/visits") {
-                    val patientId = call.parameters["id"] ?: return@get call.respond(
-                        HttpStatusCode.BadRequest,
-                        MessageResponse("Missing patient ID")
-                    )
+                    val patientId = call.parameters["id"] ?: return@get call.respond(HttpStatusCode.BadRequest, MessageResponse("Missing patient ID"))
                     val patient = dbManager.getPatient(patientId)
                     if (patient == null) {
                         call.respond(HttpStatusCode.NotFound, MessageResponse("Patient not found"))
                         return@get
                     }
-
+                    
                     val visits = dbManager.getVisitsForPatient(patientId)
                     call.respond(HttpStatusCode.OK, visits)
                 }
@@ -248,6 +246,59 @@ fun Application.module() {
                 get("/visits") {
                     val visits = dbManager.getAllVisits()
                     call.respond(HttpStatusCode.OK, visits)
+                }
+
+                post("/inventory") {
+                    try {
+                        val req = call.receive<InventoryUpdateRequest>()
+                        val item = dbManager.updateInventoryItem(
+                            medicationName = req.medicationName,
+                            quantity = req.quantity,
+                            pricePerUnit = req.pricePerUnit
+                        )
+                        call.respond(HttpStatusCode.OK, item)
+                    } catch (e: Exception) {
+                        call.respond(HttpStatusCode.BadRequest, MessageResponse(e.message ?: "Failed to update inventory"))
+                    }
+                }
+
+                get("/inventory") {
+                    val inventory = dbManager.getAllInventory()
+                    call.respond(HttpStatusCode.OK, inventory)
+                }
+
+                post("/visits/{id}/pharmacy-orders") {
+                    val visitId = call.parameters["id"] ?: return@post call.respond(HttpStatusCode.BadRequest, MessageResponse("Missing visit ID"))
+                    try {
+                        val req = call.receive<PharmacyOrderRequest>()
+                        val visit = dbManager.getVisit(visitId)
+                        if (visit == null) {
+                            call.respond(HttpStatusCode.NotFound, MessageResponse("Visit not found"))
+                            return@post
+                        }
+
+                        val order = dbManager.createPharmacyOrder(
+                            visitId = visitId,
+                            items = req.items,
+                            amountPhonePe = req.amountPhonePe,
+                            amountCash = req.amountCash
+                        )
+                        call.respond(HttpStatusCode.Created, order)
+                    } catch (e: Exception) {
+                        call.respond(HttpStatusCode.BadRequest, MessageResponse(e.message ?: "Failed to create pharmacy order"))
+                    }
+                }
+
+                get("/visits/{id}/pharmacy-orders") {
+                    val visitId = call.parameters["id"] ?: return@get call.respond(HttpStatusCode.BadRequest, MessageResponse("Missing visit ID"))
+                    val visit = dbManager.getVisit(visitId)
+                    if (visit == null) {
+                        call.respond(HttpStatusCode.NotFound, MessageResponse("Visit not found"))
+                        return@get
+                    }
+
+                    val orders = dbManager.getPharmacyOrdersForVisit(visitId)
+                    call.respond(HttpStatusCode.OK, orders)
                 }
             }
         }

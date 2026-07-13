@@ -57,6 +57,41 @@ data class DbVisit(
     val createdAt: Long
 )
 
+@Serializable
+data class DbInventoryItem(
+    val id: String,
+    val medicationName: String,
+    val quantity: Int,
+    val pricePerUnit: Double,
+    val updatedAt: Long
+)
+
+@Serializable
+data class DbPharmacyOrderItem(
+    val medicationName: String,
+    val quantity: Int,
+    val pricePerUnit: Double
+)
+
+@Serializable
+data class DbPharmacyOrder(
+    val id: String,
+    val visitId: String,
+    val status: String,
+    val amountPhonePe: Double,
+    val amountCash: Double,
+    val paymentStatus: String,
+    val transactionId: String,
+    val items: List<DbPharmacyOrderItem>,
+    val createdAt: Long
+)
+
+@Serializable
+data class PharmacyOrderItemRequest(
+    val medicationName: String,
+    val quantity: Int
+)
+
 class DatabaseManager(private val database: Database) {
 
     init {
@@ -64,7 +99,8 @@ class DatabaseManager(private val database: Database) {
             SchemaUtils.create(
                 Users, Patients, Visits,
                 VisitSymptoms, VisitDiagnoses, VisitTreatments,
-                VisitPrescriptions, VisitAttachments
+                VisitPrescriptions, VisitAttachments,
+                Inventory, PharmacyOrders, PharmacyOrderItems
             )
         }
     }
@@ -72,7 +108,7 @@ class DatabaseManager(private val database: Database) {
     fun createUser(email: String, passwordHash: String, roles: List<String>): DbUser {
         val id = UUID.randomUUID().toString()
         val rolesStr = roles.joinToString(",")
-
+        
         transaction(database) {
             Users.insert {
                 it[Users.id] = id
@@ -366,6 +402,211 @@ class DatabaseManager(private val database: Database) {
                         attachments = attachments,
                         createdBy = row[Visits.createdBy],
                         createdAt = row[Visits.createdAt]
+                    )
+                }
+        }
+    }
+
+    fun getVisit(id: String): DbVisit? {
+        return transaction(database) {
+            Visits.selectAll().where { Visits.id eq id }
+                .map { row ->
+                    val visitId = row[Visits.id]
+
+                    val symptoms = VisitSymptoms.selectAll().where { VisitSymptoms.visitId eq visitId }
+                        .map { it[VisitSymptoms.symptom] }
+
+                    val diagnoses = VisitDiagnoses.selectAll().where { VisitDiagnoses.visitId eq visitId }
+                        .map { it[VisitDiagnoses.diagnosis] }
+
+                    val treatments = VisitTreatments.selectAll().where { VisitTreatments.visitId eq visitId }
+                        .map { it[VisitTreatments.treatment] }
+
+                    val prescriptions = VisitPrescriptions.selectAll().where { VisitPrescriptions.visitId eq visitId }
+                        .map {
+                            Prescription(
+                                medicationName = it[VisitPrescriptions.medicationName],
+                                dosage = it[VisitPrescriptions.dosage],
+                                frequency = it[VisitPrescriptions.frequency],
+                                duration = it[VisitPrescriptions.duration]
+                            )
+                        }
+
+                    val attachments = VisitAttachments.selectAll().where { VisitAttachments.visitId eq visitId }
+                        .map {
+                            VisitAttachment(
+                                url = it[VisitAttachments.url],
+                                mediaType = it[VisitAttachments.mediaType]
+                            )
+                        }
+
+                    DbVisit(
+                        id = visitId,
+                        patientId = row[Visits.patientId],
+                        type = row[Visits.type],
+                        requiredPaymentAmount = row[Visits.requiredPaymentAmount],
+                        amountPhonePe = row[Visits.amountPhonePe],
+                        amountCash = row[Visits.amountCash],
+                        paymentStatus = row[Visits.paymentStatus],
+                        transactionId = row[Visits.transactionId],
+                        symptoms = symptoms,
+                        diagnoses = diagnoses,
+                        treatments = treatments,
+                        prescriptions = prescriptions,
+                        attachments = attachments,
+                        createdBy = row[Visits.createdBy],
+                        createdAt = row[Visits.createdAt]
+                    )
+                }
+                .singleOrNull()
+        }
+    }
+
+    fun updateInventoryItem(medicationName: String, quantity: Int, pricePerUnit: Double): DbInventoryItem {
+        val now = System.currentTimeMillis()
+        transaction(database) {
+            val existing = Inventory.selectAll().where { Inventory.medicationName eq medicationName }.singleOrNull()
+            if (existing != null) {
+                Inventory.update({ Inventory.medicationName eq medicationName }) {
+                    it[Inventory.quantity] = quantity
+                    it[Inventory.pricePerUnit] = pricePerUnit
+                    it[Inventory.updatedAt] = now
+                }
+            } else {
+                Inventory.insert {
+                    it[Inventory.id] = UUID.randomUUID().toString()
+                    it[Inventory.medicationName] = medicationName
+                    it[Inventory.quantity] = quantity
+                    it[Inventory.pricePerUnit] = pricePerUnit
+                    it[Inventory.updatedAt] = now
+                }
+            }
+        }
+        return transaction(database) {
+            Inventory.selectAll().where { Inventory.medicationName eq medicationName }
+                .map {
+                    DbInventoryItem(
+                        id = it[Inventory.id],
+                        medicationName = it[Inventory.medicationName],
+                        quantity = it[Inventory.quantity],
+                        pricePerUnit = it[Inventory.pricePerUnit],
+                        updatedAt = it[Inventory.updatedAt]
+                    )
+                }
+                .single()
+        }
+    }
+
+    fun getAllInventory(): List<DbInventoryItem> {
+        return transaction(database) {
+            Inventory.selectAll().map {
+                DbInventoryItem(
+                    id = it[Inventory.id],
+                    medicationName = it[Inventory.medicationName],
+                    quantity = it[Inventory.quantity],
+                    pricePerUnit = it[Inventory.pricePerUnit],
+                    updatedAt = it[Inventory.updatedAt]
+                )
+            }
+        }
+    }
+
+    fun createPharmacyOrder(
+        visitId: String,
+        items: List<PharmacyOrderItemRequest>,
+        amountPhonePe: Double,
+        amountCash: Double
+    ): DbPharmacyOrder {
+        val orderId = UUID.randomUUID().toString()
+        val transactionId = "TXN-" + UUID.randomUUID().toString().take(8).uppercase()
+        val createdAt = System.currentTimeMillis()
+
+        return transaction(database) {
+            val processedItems = items.map { req ->
+                val invItem = Inventory.selectAll().where { Inventory.medicationName eq req.medicationName }
+                    .singleOrNull() ?: throw IllegalArgumentException("Medication ${req.medicationName} not found in inventory")
+                
+                val currentQty = invItem[Inventory.quantity]
+                if (currentQty < req.quantity) {
+                    throw IllegalArgumentException("Insufficient stock for ${req.medicationName}. Available: $currentQty, Requested: ${req.quantity}")
+                }
+
+                Inventory.update({ Inventory.medicationName eq req.medicationName }) {
+                    it[Inventory.quantity] = currentQty - req.quantity
+                    it[Inventory.updatedAt] = createdAt
+                }
+
+                DbPharmacyOrderItem(
+                    medicationName = req.medicationName,
+                    quantity = req.quantity,
+                    pricePerUnit = invItem[Inventory.pricePerUnit]
+                )
+            }
+
+            val requiredPayment = processedItems.sumOf { it.quantity * it.pricePerUnit }
+            val totalPaid = amountPhonePe + amountCash
+            val paymentStatus = if (totalPaid >= requiredPayment) "PAID" else "PENDING"
+
+            PharmacyOrders.insert {
+                it[PharmacyOrders.id] = orderId
+                it[PharmacyOrders.visitId] = visitId
+                it[PharmacyOrders.status] = "DISPENSED"
+                it[PharmacyOrders.amountPhonePe] = amountPhonePe
+                it[PharmacyOrders.amountCash] = amountCash
+                it[PharmacyOrders.paymentStatus] = paymentStatus
+                it[PharmacyOrders.transactionId] = transactionId
+                it[PharmacyOrders.createdAt] = createdAt
+            }
+
+            processedItems.forEach { item ->
+                PharmacyOrderItems.insert {
+                    it[PharmacyOrderItems.id] = UUID.randomUUID().toString()
+                    it[PharmacyOrderItems.orderId] = orderId
+                    it[PharmacyOrderItems.medicationName] = item.medicationName
+                    it[PharmacyOrderItems.quantity] = item.quantity
+                    it[PharmacyOrderItems.pricePerUnit] = item.pricePerUnit
+                }
+            }
+
+            DbPharmacyOrder(
+                id = orderId,
+                visitId = visitId,
+                status = "DISPENSED",
+                amountPhonePe = amountPhonePe,
+                amountCash = amountCash,
+                paymentStatus = paymentStatus,
+                transactionId = transactionId,
+                items = processedItems,
+                createdAt = createdAt
+            )
+        }
+    }
+
+    fun getPharmacyOrdersForVisit(visitId: String): List<DbPharmacyOrder> {
+        return transaction(database) {
+            PharmacyOrders.selectAll().where { PharmacyOrders.visitId eq visitId }
+                .orderBy(PharmacyOrders.createdAt to SortOrder.DESC)
+                .map { row ->
+                    val orderId = row[PharmacyOrders.id]
+                    val items = PharmacyOrderItems.selectAll().where { PharmacyOrderItems.orderId eq orderId }
+                        .map {
+                            DbPharmacyOrderItem(
+                                medicationName = it[PharmacyOrderItems.medicationName],
+                                quantity = it[PharmacyOrderItems.quantity],
+                                pricePerUnit = it[PharmacyOrderItems.pricePerUnit]
+                            )
+                        }
+
+                    DbPharmacyOrder(
+                        id = orderId,
+                        visitId = row[PharmacyOrders.visitId],
+                        status = row[PharmacyOrders.status],
+                        amountPhonePe = row[PharmacyOrders.amountPhonePe],
+                        amountCash = row[PharmacyOrders.amountCash],
+                        paymentStatus = row[PharmacyOrders.paymentStatus],
+                        transactionId = row[PharmacyOrders.transactionId],
+                        items = items,
+                        createdAt = row[PharmacyOrders.createdAt]
                     )
                 }
         }
