@@ -36,7 +36,11 @@ class ApiV1 {
 
     @Serializable
     @Resource("visits")
-    class Visits(val parent: ApiV1 = ApiV1())
+    class Visits(val parent: ApiV1 = ApiV1()) {
+        @Serializable
+        @Resource("types")
+        class VisitTypes(val parent: Visits = Visits())
+    }
 
     @Serializable
     @Resource("visits/{id}")

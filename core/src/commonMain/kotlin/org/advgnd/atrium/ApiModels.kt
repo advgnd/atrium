@@ -19,6 +19,9 @@ data class ValidationError(val path: String, val message: String)
 data class ValidationErrorsResponse(val errors: List<ValidationError>)
 
 @Serializable
+data class VisitTypeDto(val name: String, val defaultCost: Double)
+
+@Serializable
 data class MessageResponse(val message: String)
 
 

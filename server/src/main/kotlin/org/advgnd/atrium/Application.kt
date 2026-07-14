@@ -280,6 +280,18 @@ fun Application.module() {
                 call.respond(HttpStatusCode.OK, visits)
             }
 
+            get<ApiV1.Visits.VisitTypes> {
+                val types = listOf(
+                    VisitTypeDto("General ENT Consultation", 500.0),
+                    VisitTypeDto("Diagnostic Nasal Endoscopy", 1500.0),
+                    VisitTypeDto("Ear Wax Removal (Micro-suction)", 400.0),
+                    VisitTypeDto("Hearing Test (Audiometry)", 800.0),
+                    VisitTypeDto("Tympanoplasty Follow-up", 300.0),
+                    VisitTypeDto("Allergy Skin Prick Test", 1200.0)
+                )
+                call.respond(HttpStatusCode.OK, types)
+            }
+
             post<ApiV1.Inventory> {
                 try {
                     val req = call.receive<InventoryUpdateRequest>()
