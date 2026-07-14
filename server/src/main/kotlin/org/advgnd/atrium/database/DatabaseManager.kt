@@ -1,6 +1,8 @@
 package org.advgnd.atrium.database
 
 import org.jetbrains.exposed.sql.*
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.greaterEq
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
 import java.time.LocalDate
@@ -48,7 +50,8 @@ data class DbVisit(
     val pharmacyRequiredAmount: Double,
     val pharmacyAmountPhonePe: Double,
     val pharmacyAmountCash: Double,
-    val pharmacyPaymentStatus: PaymentStatus
+    val pharmacyPaymentStatus: PaymentStatus,
+    val notes: String
 )
 
 @Serializable
@@ -195,7 +198,8 @@ class DatabaseManager(private val database: Database) {
         treatments: List<String>,
         prescriptions: List<Prescription>,
         attachments: List<VisitAttachment>,
-        createdBy: String
+        createdBy: String,
+        notes: String
     ): DbVisit {
         val visitId = UUID.randomUUID().toString()
         val createdAt = System.currentTimeMillis()
@@ -217,6 +221,7 @@ class DatabaseManager(private val database: Database) {
                 it[Visits.paymentStatus] = PaymentStatus.PENDING
                 it[Visits.createdBy] = createdBy
                 it[Visits.createdAt] = createdAt
+                it[Visits.notes] = notes
                 it[Visits.pharmacyAmountPhonePe] = 0.0
                 it[Visits.pharmacyAmountCash] = 0.0
                 it[Visits.pharmacyPaymentStatus] = PaymentStatus.PENDING
@@ -374,8 +379,122 @@ class DatabaseManager(private val database: Database) {
             pharmacyRequiredAmount = pharmacyRequired,
             pharmacyAmountPhonePe = row[Visits.pharmacyAmountPhonePe],
             pharmacyAmountCash = row[Visits.pharmacyAmountCash],
-            pharmacyPaymentStatus = row[Visits.pharmacyPaymentStatus]
+            pharmacyPaymentStatus = row[Visits.pharmacyPaymentStatus],
+            notes = row[Visits.notes]
         )
+    }
+
+    fun updatePatient(
+        id: String,
+        name: String,
+        dateOfBirth: String,
+        gender: String,
+        contactNumber: String,
+        email: String,
+        address: String
+    ): DbPatient? {
+        transaction(database) {
+            Patients.update({ Patients.id eq id }) {
+                it[Patients.name] = name
+                it[Patients.dateOfBirth] = dateOfBirth
+                it[Patients.gender] = gender
+                it[Patients.contactNumber] = contactNumber
+                it[Patients.email] = email
+                it[Patients.address] = address
+            }
+        }
+        return getPatient(id)
+    }
+
+    fun updateVisitDetails(
+        idOrUserFacingId: String,
+        type: String,
+        requiredPaymentAmount: Double,
+        symptoms: List<String>,
+        diagnoses: List<String>,
+        treatments: List<String>,
+        prescriptions: List<Prescription>,
+        attachments: List<VisitAttachment>,
+        notes: String
+    ): DbVisit? {
+        return transaction(database) {
+            val startMillis = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toEpochSecond() * 1000
+            val visitRow = Visits.selectAll().where {
+                (Visits.id eq idOrUserFacingId) or
+                ((Visits.userFacingId eq idOrUserFacingId) and (Visits.createdAt greaterEq startMillis))
+            }.singleOrNull() ?: return@transaction null
+
+            val visitUuid = visitRow[Visits.id]
+
+            Visits.update({ Visits.id eq visitUuid }) {
+                it[Visits.type] = type
+                it[Visits.requiredPaymentAmount] = requiredPaymentAmount
+                it[Visits.notes] = notes
+            }
+
+            VisitSymptoms.deleteWhere { VisitSymptoms.visitId eq visitUuid }
+            symptoms.forEach { sym ->
+                VisitSymptoms.insert {
+                    it[VisitSymptoms.id] = UUID.randomUUID().toString()
+                    it[VisitSymptoms.visitId] = visitUuid
+                    it[VisitSymptoms.symptom] = sym
+                }
+            }
+
+            VisitDiagnoses.deleteWhere { VisitDiagnoses.visitId eq visitUuid }
+            diagnoses.forEach { diag ->
+                VisitDiagnoses.insert {
+                    it[VisitDiagnoses.id] = UUID.randomUUID().toString()
+                    it[VisitDiagnoses.visitId] = visitUuid
+                    it[VisitDiagnoses.diagnosis] = diag
+                }
+            }
+
+            VisitTreatments.deleteWhere { VisitTreatments.visitId eq visitUuid }
+            treatments.forEach { treat ->
+                VisitTreatments.insert {
+                    it[VisitTreatments.id] = UUID.randomUUID().toString()
+                    it[VisitTreatments.visitId] = visitUuid
+                    it[VisitTreatments.treatment] = treat
+                }
+            }
+
+            val oldPrescriptions = VisitPrescriptions.selectAll().where { VisitPrescriptions.visitId eq visitUuid }
+                .associate { it[VisitPrescriptions.medicationId] to it[VisitPrescriptions.dispensed] }
+
+            VisitPrescriptions.deleteWhere { VisitPrescriptions.visitId eq visitUuid }
+            prescriptions.forEach { presc ->
+                val dispensedVal = oldPrescriptions[presc.medicationId] ?: presc.dispensed
+                VisitPrescriptions.insert {
+                    it[VisitPrescriptions.id] = UUID.randomUUID().toString()
+                    it[VisitPrescriptions.visitId] = visitUuid
+                    it[VisitPrescriptions.medicationId] = presc.medicationId
+                    it[VisitPrescriptions.quantity] = presc.quantity
+                    it[VisitPrescriptions.dosage] = presc.dosage
+                    it[VisitPrescriptions.frequency] = presc.frequency
+                    it[VisitPrescriptions.duration] = presc.duration
+                    it[VisitPrescriptions.dispensed] = dispensedVal
+                }
+            }
+
+            VisitAttachments.deleteWhere { VisitAttachments.visitId eq visitUuid }
+            attachments.forEach { att ->
+                VisitAttachments.insert {
+                    it[VisitAttachments.id] = UUID.randomUUID().toString()
+                    it[VisitAttachments.visitId] = visitUuid
+                    it[VisitAttachments.url] = att.url
+                    it[VisitAttachments.mediaType] = att.mediaType
+                }
+            }
+
+            val patientRow = Patients.selectAll().where { Patients.id eq visitRow[Visits.patientId] }.singleOrNull()
+            val patientUuid = patientRow?.get(Patients.id) ?: ""
+            mapRowToDbVisit(
+                Visits.selectAll().where { Visits.id eq visitUuid }.single(),
+                visitUuid,
+                patientUuid
+            )
+        }
     }
 
     fun updateInventoryItem(

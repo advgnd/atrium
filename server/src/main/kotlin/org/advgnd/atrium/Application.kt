@@ -8,6 +8,13 @@ import io.ktor.server.routing.*
 import io.ktor.server.sessions.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.serialization.kotlinx.json.*
+import io.ktor.server.http.content.staticFiles
+import io.ktor.http.content.PartData
+import io.ktor.http.content.forEachPart
+import io.ktor.http.content.streamProvider
+import io.ktor.server.request.receiveMultipart
+import java.io.File
+import java.util.UUID
 import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.http.*
@@ -15,6 +22,7 @@ import io.ktor.server.resources.*
 import io.ktor.server.resources.Resources
 import io.ktor.server.resources.post
 import io.ktor.server.resources.get
+import io.ktor.server.resources.put
 import org.advgnd.atrium.database.DatabaseManager
 import org.advgnd.atrium.database.ExposedSessionStorage
 import org.advgnd.atrium.model.UserSession
@@ -114,6 +122,43 @@ fun Application.module() {
     }
 
     routing {
+        staticFiles("/uploads", File("uploads"))
+
+        post<ApiV1.Upload> {
+            try {
+                val multipart = call.receiveMultipart()
+                var fileBytes: ByteArray? = null
+                var fileName = ""
+                
+                multipart.forEachPart { part ->
+                    if (part is PartData.FileItem) {
+                        fileName = part.originalFileName ?: "file"
+                        fileBytes = part.streamProvider().readBytes()
+                    }
+                    part.dispose()
+                }
+                
+                if (fileBytes != null) {
+                    val uploadsDir = File("uploads")
+                    if (!uploadsDir.exists()) {
+                        uploadsDir.mkdirs()
+                    }
+                    val ext = File(fileName).extension
+                    val cleanExt = if (ext.isNotEmpty()) ".$ext" else ""
+                    val uniqueName = "${UUID.randomUUID()}$cleanExt"
+                    val destinationFile = File(uploadsDir, uniqueName)
+                    destinationFile.writeBytes(fileBytes!!)
+                    
+                    val relativeUrl = "/uploads/$uniqueName"
+                    call.respond(HttpStatusCode.OK, mapOf("url" to relativeUrl, "fileName" to fileName))
+                } else {
+                    call.respond(HttpStatusCode.BadRequest, MessageResponse("No file uploaded"))
+                }
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.InternalServerError, MessageResponse(e.message ?: "Upload failed"))
+            }
+        }
+
         get("/") {
             call.respondText(sayHello("Ktor"))
         }
@@ -229,6 +274,28 @@ fun Application.module() {
                 }
             }
 
+            put<ApiV1.PatientDetail> { route ->
+                try {
+                    val req = call.receive<PatientRequest>()
+                    val validation = validatePatient(req)
+                    if (validation is ValidationResult.Failure) {
+                        val errors = validation.violations.map { ValidationError(it.path.joinToString("."), it.message) }
+                        call.respond(HttpStatusCode.BadRequest, ValidationErrorsResponse(errors))
+                        return@put
+                    }
+                    val updated = dbManager.updatePatient(
+                        route.id, req.name, req.dateOfBirth, req.gender, req.contactNumber, req.email, req.address
+                    )
+                    if (updated != null) {
+                        call.respond(HttpStatusCode.OK, updated)
+                    } else {
+                        call.respond(HttpStatusCode.NotFound, MessageResponse("Patient not found"))
+                    }
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.BadRequest, MessageResponse(e.message ?: "Invalid request"))
+                }
+            }
+
             post<ApiV1.PatientVisits> { route ->
                 try {
                     val req = call.receive<VisitRequest>()
@@ -256,7 +323,8 @@ fun Application.module() {
                         treatments = req.treatments,
                         prescriptions = req.prescriptions,
                         attachments = req.attachments,
-                        createdBy = userSession.userId
+                        createdBy = userSession.userId,
+                        notes = req.notes
                     )
                     call.respond(HttpStatusCode.Created, visit)
                 } catch (e: Exception) {
@@ -290,6 +358,37 @@ fun Application.module() {
                     VisitTypeDto("Allergy Skin Prick Test", 1200.0)
                 )
                 call.respond(HttpStatusCode.OK, types)
+            }
+
+            get<ApiV1.VisitDetail> { route ->
+                val visit = dbManager.getVisit(route.id)
+                if (visit != null) {
+                    call.respond(HttpStatusCode.OK, visit)
+                } else {
+                    call.respond(HttpStatusCode.NotFound, MessageResponse("Visit not found"))
+                }
+            }
+
+            put<ApiV1.VisitDetail> { route ->
+                try {
+                    val req = call.receive<VisitRequest>()
+                    val validation = validateVisit(req)
+                    if (validation is ValidationResult.Failure) {
+                        val errors = validation.violations.map { ValidationError(it.path.joinToString("."), it.message) }
+                        call.respond(HttpStatusCode.BadRequest, ValidationErrorsResponse(errors))
+                        return@put
+                    }
+                    val updated = dbManager.updateVisitDetails(
+                        route.id, req.type, req.requiredPaymentAmount, req.symptoms, req.diagnoses, req.treatments, req.prescriptions, req.attachments, req.notes
+                    )
+                    if (updated != null) {
+                        call.respond(HttpStatusCode.OK, updated)
+                    } else {
+                        call.respond(HttpStatusCode.NotFound, MessageResponse("Visit not found"))
+                    }
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.BadRequest, MessageResponse(e.message ?: "Invalid request"))
+                }
             }
 
             post<ApiV1.Inventory> {

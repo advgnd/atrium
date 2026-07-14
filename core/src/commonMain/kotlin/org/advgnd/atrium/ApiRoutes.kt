@@ -51,6 +51,10 @@ class ApiV1 {
     class Inventory(val parent: ApiV1 = ApiV1())
 
     @Serializable
+    @Resource("upload")
+    class Upload(val parent: ApiV1 = ApiV1())
+
+    @Serializable
     @Resource("visits/{id}/pay-visit")
     class VisitPay(val parent: ApiV1 = ApiV1(), val id: String)
 

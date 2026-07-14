@@ -64,7 +64,8 @@ data class VisitRequest(
     val diagnoses: List<String> = emptyList(),
     val treatments: List<String> = emptyList(),
     val prescriptions: List<Prescription> = emptyList(),
-    val attachments: List<VisitAttachment> = emptyList()
+    val attachments: List<VisitAttachment> = emptyList(),
+    val notes: String = ""
 )
 
 @Validate

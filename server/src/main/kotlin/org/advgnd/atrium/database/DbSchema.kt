@@ -41,6 +41,7 @@ object Visits : Table("visits") {
     val paymentStatus = enumeration<PaymentStatus>("payment_status")
     val createdBy = text("created_by").references(Users.id)
     val createdAt = long("created_at")
+    val notes = text("notes").default("")
     
     val pharmacyAmountPhonePe = double("pharmacy_amount_phone_pe").default(0.0)
     val pharmacyAmountCash = double("pharmacy_amount_cash").default(0.0)
