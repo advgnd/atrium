@@ -23,6 +23,7 @@ dependencies {
     implementation(libs.sqlite.jdbc)
     implementation(libs.exposed.core)
     implementation(libs.exposed.jdbc)
+    implementation(libs.akkurate.core)
     testImplementation(libs.ktor.serverTestHost)
     testImplementation(libs.kotlin.testJunit)
 }

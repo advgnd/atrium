@@ -20,6 +20,66 @@ import org.advgnd.atrium.database.ExposedSessionStorage
 import org.advgnd.atrium.model.UserSession
 import org.advgnd.atrium.security.PasswordHasher
 import org.jetbrains.exposed.sql.Database
+import dev.nesk.akkurate.Validator
+import dev.nesk.akkurate.ValidationResult
+import dev.nesk.akkurate.constraints.builders.*
+import dev.nesk.akkurate.constraints.otherwise
+import dev.nesk.akkurate.constraints.*
+import org.advgnd.atrium.validation.accessors.*
+import dev.nesk.akkurate.validatables.*
+import java.time.LocalDate
+import java.time.format.DateTimeParseException
+
+val emailRegex = Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")
+val contactRegex = Regex("^[0-9\\s\\-]+$")
+
+val validateAuth = Validator<AuthRequest> {
+    email.constrain { it.matches(emailRegex) } otherwise { "Invalid email address format" }
+    password.hasLengthGreaterThanOrEqualTo(8) otherwise { "Password must be at least 8 characters long" }
+    password.constrain { it.any { c -> c.isLetter() } && it.any { c -> c.isDigit() } } otherwise { "Password must contain both letters and digits" }
+}
+
+val validatePatient = Validator<PatientRequest> {
+    name.isNotEmpty() otherwise { "Name cannot be empty" }
+    name.isNotBlank() otherwise { "Name cannot be blank" }
+    dateOfBirth.constrain {
+        try {
+            val dob = LocalDate.parse(it)
+            !dob.isAfter(LocalDate.now())
+        } catch (e: DateTimeParseException) {
+            false
+        }
+    } otherwise { "Date of Birth must be a valid date in the past (YYYY-MM-DD)" }
+    gender.constrain { it.equals("Male", ignoreCase = true) || it.equals("Female", ignoreCase = true) || it.equals("Other", ignoreCase = true) } otherwise {
+        "Gender must be Male, Female, or Other"
+    }
+    contactNumber.constrain { it.matches(contactRegex) && it.replace(Regex("[^0-9]"), "").length >= 10 } otherwise {
+        "Contact number must contain at least 10 digits"
+    }
+    email.constrain { it.isBlank() || it.matches(emailRegex) } otherwise { "Invalid email address format" }
+}
+
+val validateVisit = Validator<VisitRequest> {
+    type.isNotEmpty() otherwise { "Visit type cannot be empty" }
+    type.isNotBlank() otherwise { "Visit type cannot be blank" }
+    requiredPaymentAmount.constrain { it >= 0.0 } otherwise { "Required payment amount must be non-negative" }
+    prescriptions.constrain { list -> list.all { it.quantity > 0 } } otherwise { "Each prescription quantity must be at least 1" }
+}
+
+val validateInventoryUpdate = Validator<InventoryUpdateRequest> {
+    medicationName.isNotEmpty() otherwise { "Medication name cannot be empty" }
+    medicationName.isNotBlank() otherwise { "Medication name cannot be blank" }
+    quantity.constrain { it >= 0 } otherwise { "Quantity must be non-negative" }
+    pricePerUnit.constrain { it >= 0.0 } otherwise { "Price per unit must be non-negative" }
+}
+
+val validatePayment = Validator<PaymentRequest> {
+    amountPhonePe.constrain { it >= 0.0 } otherwise { "PhonePe amount must be non-negative" }
+    amountCash.constrain { it >= 0.0 } otherwise { "Cash amount must be non-negative" }
+    constrain { it.amountPhonePe >= 0.0 && it.amountCash >= 0.0 && (it.amountPhonePe + it.amountCash) > 0.0 } otherwise {
+        "At least one payment amount must be greater than zero"
+    }
+}
 
 fun main() {
     embeddedServer(Netty, port = 8080, host = "0.0.0.0", module = Application::module)
@@ -61,8 +121,10 @@ fun Application.module() {
         post<ApiV1.Register> {
             try {
                 val req = call.receive<AuthRequest>()
-                if (req.email.isBlank() || req.password.isBlank()) {
-                    call.respond(HttpStatusCode.BadRequest, MessageResponse("Email and password are required"))
+                val validation = validateAuth(req)
+                if (validation is ValidationResult.Failure) {
+                    val errors = validation.violations.map { ValidationError(it.path.joinToString("."), it.message) }
+                    call.respond(HttpStatusCode.BadRequest, ValidationErrorsResponse(errors))
                     return@post
                 }
 
@@ -84,6 +146,13 @@ fun Application.module() {
         post<ApiV1.Login> {
             try {
                 val req = call.receive<AuthRequest>()
+                val validation = validateAuth(req)
+                if (validation is ValidationResult.Failure) {
+                    val errors = validation.violations.map { ValidationError(it.path.joinToString("."), it.message) }
+                    call.respond(HttpStatusCode.BadRequest, ValidationErrorsResponse(errors))
+                    return@post
+                }
+
                 val user = dbManager.findUserByEmail(req.email)
                 if (user == null || !PasswordHasher.verify(req.password, user.passwordHash)) {
                     call.respond(HttpStatusCode.Unauthorized, MessageResponse("Invalid credentials"))
@@ -125,6 +194,13 @@ fun Application.module() {
             post<ApiV1.Patients> {
                 try {
                     val req = call.receive<PatientRequest>()
+                    val validation = validatePatient(req)
+                    if (validation is ValidationResult.Failure) {
+                        val errors = validation.violations.map { ValidationError(it.path.joinToString("."), it.message) }
+                        call.respond(HttpStatusCode.BadRequest, ValidationErrorsResponse(errors))
+                        return@post
+                    }
+
                     val patient = dbManager.createPatient(
                         name = req.name,
                         dateOfBirth = req.dateOfBirth,
@@ -156,6 +232,13 @@ fun Application.module() {
             post<ApiV1.PatientVisits> { route ->
                 try {
                     val req = call.receive<VisitRequest>()
+                    val validation = validateVisit(req)
+                    if (validation is ValidationResult.Failure) {
+                        val errors = validation.violations.map { ValidationError(it.path.joinToString("."), it.message) }
+                        call.respond(HttpStatusCode.BadRequest, ValidationErrorsResponse(errors))
+                        return@post
+                    }
+
                     val userSession = call.principal<UserSession>() ?: return@post call.respond(HttpStatusCode.Unauthorized, MessageResponse("Not authenticated"))
                     
                     val patient = dbManager.getPatient(route.id)
@@ -175,7 +258,6 @@ fun Application.module() {
                         attachments = req.attachments,
                         createdBy = userSession.userId
                     )
-
                     call.respond(HttpStatusCode.Created, visit)
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.BadRequest, MessageResponse(e.message ?: "Failed to record clinic visit"))
@@ -201,6 +283,13 @@ fun Application.module() {
             post<ApiV1.Inventory> {
                 try {
                     val req = call.receive<InventoryUpdateRequest>()
+                    val validation = validateInventoryUpdate(req)
+                    if (validation is ValidationResult.Failure) {
+                        val errors = validation.violations.map { ValidationError(it.path.joinToString("."), it.message) }
+                        call.respond(HttpStatusCode.BadRequest, ValidationErrorsResponse(errors))
+                        return@post
+                    }
+
                     val item = dbManager.updateInventoryItem(
                         medicationName = req.medicationName,
                         quantity = req.quantity,
@@ -220,6 +309,13 @@ fun Application.module() {
             post<ApiV1.VisitPay> { route ->
                 try {
                     val req = call.receive<PaymentRequest>()
+                    val validation = validatePayment(req)
+                    if (validation is ValidationResult.Failure) {
+                        val errors = validation.violations.map { ValidationError(it.path.joinToString("."), it.message) }
+                        call.respond(HttpStatusCode.BadRequest, ValidationErrorsResponse(errors))
+                        return@post
+                    }
+
                     val visit = dbManager.payVisit(
                         visitId = route.id,
                         amountPhonePe = req.amountPhonePe,
@@ -234,6 +330,13 @@ fun Application.module() {
             post<ApiV1.VisitDispense> { route ->
                 try {
                     val req = call.receive<PaymentRequest>()
+                    val validation = validatePayment(req)
+                    if (validation is ValidationResult.Failure) {
+                        val errors = validation.violations.map { ValidationError(it.path.joinToString("."), it.message) }
+                        call.respond(HttpStatusCode.BadRequest, ValidationErrorsResponse(errors))
+                        return@post
+                    }
+
                     val visit = dbManager.dispensePharmacy(
                         visitId = route.id,
                         amountPhonePe = req.amountPhonePe,

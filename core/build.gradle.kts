@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidMultiplatformLibrary)
     alias(libs.plugins.kotlinxSerialization)
+    alias(libs.plugins.ksp)
 }
 
 kotlin {
@@ -32,9 +33,15 @@ kotlin {
         commonMain.dependencies {
             api(libs.ktor.resources)
             api(libs.ktor.serialization.kotlinx.json.mpp)
+            api(libs.akkurate.core)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
     }
+}
+
+dependencies {
+    add("kspJvm", libs.akkurate.ksp)
+    add("kspCommonMainMetadata", libs.akkurate.ksp)
 }

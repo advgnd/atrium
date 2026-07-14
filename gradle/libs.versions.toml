@@ -55,6 +55,8 @@ ktor-serialization-kotlinx-json-mpp = { module = "io.ktor:ktor-serialization-kot
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version = "3.46.0.0" }
 exposed-core = { module = "org.jetbrains.exposed:exposed-core", version = "0.53.0" }
 exposed-jdbc = { module = "org.jetbrains.exposed:exposed-jdbc", version = "0.53.0" }
+akkurate-core = { module = "dev.nesk.akkurate:akkurate-core", version = "0.11.0" }
+akkurate-ksp = { module = "dev.nesk.akkurate:akkurate-ksp-plugin", version = "0.11.0" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
@@ -65,3 +67,4 @@ kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlinxSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ktor = { id = "io.ktor.plugin", version.ref = "ktor" }
+ksp = { id = "com.google.devtools.ksp", version = "2.3.10" }

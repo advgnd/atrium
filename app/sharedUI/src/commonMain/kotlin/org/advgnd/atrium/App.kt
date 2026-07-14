@@ -20,6 +20,8 @@ import io.ktor.http.*
 import org.advgnd.atrium.Prescription
 import org.advgnd.atrium.VisitAttachment
 import org.advgnd.atrium.PaymentStatus
+import org.advgnd.atrium.ValidationErrorsResponse
+import org.advgnd.atrium.ValidationError
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
@@ -76,6 +78,7 @@ fun App() {
         var currentScreen by remember { mutableStateOf(AppScreen.LOGIN) }
         var isLoggedIn by remember { mutableStateOf(false) }
         var infoMessage by remember { mutableStateOf("") }
+        var validationErrors by remember { mutableStateOf(emptyMap<String, String>()) }
         val scope = rememberCoroutineScope()
 
         var loginEmail by remember { mutableStateOf("") }
@@ -98,9 +101,7 @@ fun App() {
         var visitSymptomsRaw by remember { mutableStateOf("") }
         var visitDiagnosesRaw by remember { mutableStateOf("") }
         var visitTreatmentsRaw by remember { mutableStateOf("") }
-        var visitAmountPhonePe by remember { mutableStateOf("") }
-        var visitAmountCash by remember { mutableStateOf("") }
-
+        
         var selectedMedicationId by remember { mutableStateOf("") }
         var prescQtyInput by remember { mutableStateOf("") }
         var dosageInput by remember { mutableStateOf("") }
@@ -170,15 +171,32 @@ fun App() {
             }
         }
 
+        fun handleApiError(response: io.ktor.client.statement.HttpResponse) {
+            scope.launch {
+                try {
+                    if (response.status == HttpStatusCode.BadRequest) {
+                        val bodyText = response.call.body<ValidationErrorsResponse>()
+                        validationErrors = bodyText.errors.associate { it.path to it.message }
+                        infoMessage = "Validation failed"
+                    } else {
+                        val bodyText = response.call.body<MessageResponse>()
+                        infoMessage = bodyText.message
+                    }
+                } catch (e: Exception) {
+                    infoMessage = "Error processing response: ${response.status}"
+                }
+            }
+        }
+
         Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
             Text(text = "Hospital Information System Backend Client", style = MaterialTheme.typography.titleLarge)
             Spacer(modifier = Modifier.height(8.dp))
 
             if (isLoggedIn) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { currentScreen = AppScreen.PATIENTS; fetchPatients() }) { Text("Patients") }
-                    Button(onClick = { currentScreen = AppScreen.VISITS }) { Text("Visits") }
-                    Button(onClick = { currentScreen = AppScreen.INVENTORY; fetchInventory() }) { Text("Inventory") }
+                    Button(onClick = { currentScreen = AppScreen.PATIENTS; validationErrors = emptyMap(); infoMessage = ""; fetchPatients() }) { Text("Patients") }
+                    Button(onClick = { currentScreen = AppScreen.VISITS; validationErrors = emptyMap(); infoMessage = "" }) { Text("Visits") }
+                    Button(onClick = { currentScreen = AppScreen.INVENTORY; validationErrors = emptyMap(); infoMessage = ""; fetchInventory() }) { Text("Inventory") }
                     Button(onClick = {
                         scope.launch {
                             try {
@@ -189,6 +207,7 @@ fun App() {
                                     isLoggedIn = false
                                     currentScreen = AppScreen.LOGIN
                                     infoMessage = "Logged out successfully"
+                                    validationErrors = emptyMap()
                                 }
                             } catch (e: Exception) {
                                 infoMessage = e.message ?: "Connection error"
@@ -209,13 +228,16 @@ fun App() {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Login Screen")
                         TextField(value = loginEmail, onValueChange = { loginEmail = it }, label = { Text("Email") })
-                        TextField(
-                            value = loginPassword,
-                            onValueChange = { loginPassword = it },
-                            label = { Text("Password") })
+                        validationErrors["email"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+                        
+                        TextField(value = loginPassword, onValueChange = { loginPassword = it }, label = { Text("Password") })
+                        validationErrors["password"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+
                         Button(onClick = {
                             scope.launch {
                                 try {
+                                    validationErrors = emptyMap()
+                                    infoMessage = ""
                                     val response = ApiClient.client.post(ApiV1.Login()) {
                                         url { host = "localhost"; port = 8080 }
                                         contentType(ContentType.Application.Json)
@@ -228,28 +250,30 @@ fun App() {
                                         fetchPatients()
                                         fetchInventory()
                                     } else {
-                                        infoMessage = "Login failed: ${response.status}"
+                                        handleApiError(response)
                                     }
                                 } catch (e: Exception) {
                                     infoMessage = e.message ?: "Connection error"
                                 }
                             }
                         }) { Text("Login") }
-                        Button(onClick = { currentScreen = AppScreen.REGISTER }) { Text("Go to Register") }
+                        Button(onClick = { currentScreen = AppScreen.REGISTER; validationErrors = emptyMap(); infoMessage = "" }) { Text("Go to Register") }
                     }
                 }
-
                 AppScreen.REGISTER -> {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Register Screen")
                         TextField(value = regEmail, onValueChange = { regEmail = it }, label = { Text("Email") })
-                        TextField(
-                            value = regPassword,
-                            onValueChange = { regPassword = it },
-                            label = { Text("Password") })
+                        validationErrors["email"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+
+                        TextField(value = regPassword, onValueChange = { regPassword = it }, label = { Text("Password") })
+                        validationErrors["password"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+
                         Button(onClick = {
                             scope.launch {
                                 try {
+                                    validationErrors = emptyMap()
+                                    infoMessage = ""
                                     val response = ApiClient.client.post(ApiV1.Register()) {
                                         url { host = "localhost"; port = 8080 }
                                         contentType(ContentType.Application.Json)
@@ -259,85 +283,66 @@ fun App() {
                                         currentScreen = AppScreen.LOGIN
                                         infoMessage = "Registration successful"
                                     } else {
-                                        infoMessage = "Registration failed: ${response.status}"
+                                        handleApiError(response)
                                     }
                                 } catch (e: Exception) {
                                     infoMessage = e.message ?: "Connection error"
                                 }
                             }
                         }) { Text("Register") }
-                        Button(onClick = { currentScreen = AppScreen.LOGIN }) { Text("Go to Login") }
+                        Button(onClick = { currentScreen = AppScreen.LOGIN; validationErrors = emptyMap(); infoMessage = "" }) { Text("Go to Login") }
                     }
                 }
-
                 AppScreen.PATIENTS -> {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text("Add Patient")
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextField(
-                                value = patName,
-                                onValueChange = { patName = it },
-                                label = { Text("Name") },
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextField(
-                                value = patDob,
-                                onValueChange = { patDob = it },
-                                label = { Text("DOB (YYYY-MM-DD)") },
-                                modifier = Modifier.weight(1f)
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                TextField(value = patName, onValueChange = { patName = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+                                validationErrors["name"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                TextField(value = patDob, onValueChange = { patDob = it }, label = { Text("DOB (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth())
+                                validationErrors["dateOfBirth"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+                            }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextField(
-                                value = patGender,
-                                onValueChange = { patGender = it },
-                                label = { Text("Gender") },
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextField(
-                                value = patContact,
-                                onValueChange = { patContact = it },
-                                label = { Text("Contact") },
-                                modifier = Modifier.weight(1f)
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                TextField(value = patGender, onValueChange = { patGender = it }, label = { Text("Gender") }, modifier = Modifier.fillMaxWidth())
+                                validationErrors["gender"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                TextField(value = patContact, onValueChange = { patContact = it }, label = { Text("Contact") }, modifier = Modifier.fillMaxWidth())
+                                validationErrors["contactNumber"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+                            }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextField(
-                                value = patEmail,
-                                onValueChange = { patEmail = it },
-                                label = { Text("Email") },
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextField(
-                                value = patAddress,
-                                onValueChange = { patAddress = it },
-                                label = { Text("Address") },
-                                modifier = Modifier.weight(1f)
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                TextField(value = patEmail, onValueChange = { patEmail = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
+                                validationErrors["email"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                TextField(value = patAddress, onValueChange = { patAddress = it }, label = { Text("Address") }, modifier = Modifier.fillMaxWidth())
+                                validationErrors["address"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+                            }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(onClick = {
                             scope.launch {
                                 try {
+                                    validationErrors = emptyMap()
+                                    infoMessage = ""
                                     val response = ApiClient.client.post(ApiV1.Patients()) {
                                         url { host = "localhost"; port = 8080 }
                                         contentType(ContentType.Application.Json)
-                                        setBody(
-                                            PatientRequest(
-                                                patName,
-                                                patDob,
-                                                patGender,
-                                                patContact,
-                                                patEmail,
-                                                patAddress
-                                            )
-                                        )
+                                        setBody(PatientRequest(patName, patDob, patGender, patContact, patEmail, patAddress))
                                     }
                                     if (response.status == HttpStatusCode.Created) {
                                         infoMessage = "Patient registered"
                                         fetchPatients()
+                                        patName = ""; patDob = ""; patGender = ""; patContact = ""; patEmail = ""; patAddress = ""
                                     } else {
-                                        infoMessage = "Failed to add patient: ${response.status}"
+                                        handleApiError(response)
                                     }
                                 } catch (e: Exception) {
                                     infoMessage = e.message ?: "Connection error"
@@ -353,6 +358,8 @@ fun App() {
                                     selectedPatientForVisits = patient
                                     fetchVisitsForPatient(patient.id)
                                     fetchInventory()
+                                    validationErrors = emptyMap()
+                                    infoMessage = ""
                                     currentScreen = AppScreen.VISITS
                                 }.padding(8.dp).border(1.dp, Color.Gray).padding(8.dp)) {
                                     Text("${patient.name} (${patient.gender}, ${patient.dateOfBirth}) ID: ${patient.id}")
@@ -361,37 +368,27 @@ fun App() {
                         }
                     }
                 }
-
                 AppScreen.VISITS -> {
                     val scrollState = rememberScrollState()
                     Column(modifier = Modifier.fillMaxWidth().verticalScroll(scrollState)) {
                         Text("Selected Patient: ${selectedPatientForVisits?.name ?: "None"}")
                         selectedPatientForVisits?.let { pat ->
                             Text("Record New Walk-in Visit")
-                            TextField(
-                                value = visitType,
-                                onValueChange = { visitType = it },
-                                label = { Text("Visit Type") })
-                            TextField(
-                                value = visitCost,
-                                onValueChange = { visitCost = it },
-                                label = { Text("Required Cost") })
-                            TextField(
-                                value = visitSymptomsRaw,
-                                onValueChange = { visitSymptomsRaw = it },
-                                label = { Text("Symptoms") })
-                            TextField(
-                                value = visitDiagnosesRaw,
-                                onValueChange = { visitDiagnosesRaw = it },
-                                label = { Text("Diagnoses") })
-                            TextField(
-                                value = visitTreatmentsRaw,
-                                onValueChange = { visitTreatmentsRaw = it },
-                                label = { Text("Treatments") })
+                            
+                            TextField(value = visitType, onValueChange = { visitType = it }, label = { Text("Visit Type") })
+                            validationErrors["type"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+
+                            TextField(value = visitCost, onValueChange = { visitCost = it }, label = { Text("Required Cost") })
+                            validationErrors["requiredPaymentAmount"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+
+                            TextField(value = visitSymptomsRaw, onValueChange = { visitSymptomsRaw = it }, label = { Text("Symptoms (comma-separated)") })
+                            TextField(value = visitDiagnosesRaw, onValueChange = { visitDiagnosesRaw = it }, label = { Text("Diagnoses (comma-separated)") })
+                            TextField(value = visitTreatmentsRaw, onValueChange = { visitTreatmentsRaw = it }, label = { Text("Treatments (comma-separated)") })
 
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("Prescriptions")
-
+                            Text("Prescriptions (Link directly to Pharmacy Inventory)")
+                            validationErrors["prescriptions"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+                            
                             var drugNameDisplay by remember { mutableStateOf("Select Drug...") }
                             Column(modifier = Modifier.fillMaxWidth().border(1.dp, Color.Gray).padding(8.dp)) {
                                 Text(drugNameDisplay, style = MaterialTheme.typography.bodyLarge)
@@ -407,47 +404,19 @@ fun App() {
                                     }
                                 }
                             }
-
+                            
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                TextField(
-                                    value = prescQtyInput,
-                                    onValueChange = { prescQtyInput = it },
-                                    label = { Text("Quantity") },
-                                    modifier = Modifier.weight(1f)
-                                )
-                                TextField(
-                                    value = dosageInput,
-                                    onValueChange = { dosageInput = it },
-                                    label = { Text("Dosage") },
-                                    modifier = Modifier.weight(1f)
-                                )
+                                TextField(value = prescQtyInput, onValueChange = { prescQtyInput = it }, label = { Text("Quantity") }, modifier = Modifier.weight(1f))
+                                TextField(value = dosageInput, onValueChange = { dosageInput = it }, label = { Text("Dosage") }, modifier = Modifier.weight(1f))
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                TextField(
-                                    value = frequencyInput,
-                                    onValueChange = { frequencyInput = it },
-                                    label = { Text("Frequency") },
-                                    modifier = Modifier.weight(1f)
-                                )
-                                TextField(
-                                    value = durationInput,
-                                    onValueChange = { durationInput = it },
-                                    label = { Text("Duration") },
-                                    modifier = Modifier.weight(1f)
-                                )
+                                TextField(value = frequencyInput, onValueChange = { frequencyInput = it }, label = { Text("Frequency") }, modifier = Modifier.weight(1f))
+                                TextField(value = durationInput, onValueChange = { durationInput = it }, label = { Text("Duration") }, modifier = Modifier.weight(1f))
                             }
                             Button(onClick = {
                                 val qty = prescQtyInput.toIntOrNull() ?: 0
                                 if (selectedMedicationId.isNotEmpty() && qty > 0) {
-                                    prescriptionsList.add(
-                                        Prescription(
-                                            selectedMedicationId,
-                                            qty,
-                                            dosageInput,
-                                            frequencyInput,
-                                            durationInput
-                                        )
-                                    )
+                                    prescriptionsList.add(Prescription(selectedMedicationId, qty, dosageInput, frequencyInput, durationInput))
                                     selectedMedicationId = ""
                                     prescQtyInput = ""
                                     dosageInput = ""
@@ -457,17 +426,13 @@ fun App() {
                                 }
                             }) { Text("Add Prescription") }
                             prescriptionsList.forEach { p ->
-                                val name = inventoryItemsList.find { it.id == p.medicationId }?.medicationName
-                                    ?: p.medicationId
+                                val name = inventoryItemsList.find { it.id == p.medicationId }?.medicationName ?: p.medicationId
                                 Text("- $name x ${p.quantity}: ${p.dosage}, ${p.frequency}, ${p.duration}")
                             }
 
                             Spacer(modifier = Modifier.height(8.dp))
                             Text("Attachments")
-                            TextField(
-                                value = attachmentUrl,
-                                onValueChange = { attachmentUrl = it },
-                                label = { Text("Attachment URL") })
+                            TextField(value = attachmentUrl, onValueChange = { attachmentUrl = it }, label = { Text("Attachment URL") })
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(onClick = { attachmentType = "IMAGE" }) { Text("IMAGE") }
                                 Button(onClick = { attachmentType = "VIDEO" }) { Text("VIDEO") }
@@ -482,31 +447,21 @@ fun App() {
                                 Text("- ${a.url} (${a.mediaType})")
                             }
 
+                            Spacer(modifier = Modifier.height(8.dp))
                             Button(onClick = {
                                 scope.launch {
                                     try {
-                                        val syms =
-                                            visitSymptomsRaw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                                        val diags =
-                                            visitDiagnosesRaw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                                        val treats =
-                                            visitTreatmentsRaw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                                        validationErrors = emptyMap()
+                                        infoMessage = ""
+                                        val syms = visitSymptomsRaw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                                        val diags = visitDiagnosesRaw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                                        val treats = visitTreatmentsRaw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
                                         val cost = visitCost.toDoubleOrNull() ?: 0.0
 
                                         val response = ApiClient.client.post(ApiV1.PatientVisits(id = pat.id)) {
                                             url { host = "localhost"; port = 8080 }
                                             contentType(ContentType.Application.Json)
-                                            setBody(
-                                                VisitRequest(
-                                                    visitType,
-                                                    cost,
-                                                    syms,
-                                                    diags,
-                                                    treats,
-                                                    prescriptionsList.toList(),
-                                                    attachmentsList.toList()
-                                                )
-                                            )
+                                            setBody(VisitRequest(visitType, cost, syms, diags, treats, prescriptionsList.toList(), attachmentsList.toList()))
                                         }
                                         if (response.status == HttpStatusCode.Created) {
                                             val savedVisit = response.body<ClientVisit>()
@@ -514,15 +469,15 @@ fun App() {
                                             fetchVisitsForPatient(pat.id)
                                             prescriptionsList.clear()
                                             attachmentsList.clear()
+                                            visitType = ""; visitCost = ""; visitSymptomsRaw = ""; visitDiagnosesRaw = ""; visitTreatmentsRaw = ""
                                         } else {
-                                            infoMessage = "Failed to record visit: ${response.status}"
+                                            handleApiError(response)
                                         }
                                     } catch (e: Exception) {
                                         infoMessage = e.message ?: "Connection error"
                                     }
                                 }
                             }) { Text("Record Visit") }
-
 
                             Spacer(modifier = Modifier.height(16.dp))
                             Text("Visit History")
@@ -535,57 +490,43 @@ fun App() {
                                         Text("Treatments: ${visit.treatments.joinToString(", ")}")
                                         Text("Prescriptions:")
                                         visit.prescriptions.forEach { p ->
-                                            val name =
-                                                inventoryItemsList.find { it.id == p.medicationId }?.medicationName
-                                                    ?: p.medicationId
+                                            val name = inventoryItemsList.find { it.id == p.medicationId }?.medicationName ?: p.medicationId
                                             Text("  - $name x ${p.quantity} (${p.dosage} | ${p.frequency} | ${p.duration}) [Dispensed: ${p.dispensed}]")
                                         }
 
                                         Spacer(modifier = Modifier.height(4.dp))
-                                        Box(
-                                            modifier = Modifier.fillMaxWidth().background(Color(0xFFEEEEEE))
-                                                .padding(4.dp)
-                                        ) {
+                                        Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFEEEEEE)).padding(4.dp)) {
                                             Column {
-                                                Text(
-                                                    "Clinical Fee Billing",
-                                                    style = MaterialTheme.typography.labelLarge
-                                                )
+                                                Text("Clinical Fee Billing", style = MaterialTheme.typography.labelLarge)
                                                 Text("Fee: Rs. ${visit.requiredPaymentAmount} | Paid: PhonePe: Rs. ${visit.amountPhonePe}, Cash: Rs. ${visit.amountCash}")
                                                 Text("Status: ${visit.paymentStatus}")
                                                 if (visit.paymentStatus == PaymentStatus.PENDING) {
                                                     var payPhonePe by remember { mutableStateOf("") }
                                                     var payCash by remember { mutableStateOf("") }
                                                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                        TextField(
-                                                            value = payPhonePe,
-                                                            onValueChange = { payPhonePe = it },
-                                                            label = { Text("PhonePe") },
-                                                            modifier = Modifier.weight(1f)
-                                                        )
-                                                        TextField(
-                                                            value = payCash,
-                                                            onValueChange = { payCash = it },
-                                                            label = { Text("Cash") },
-                                                            modifier = Modifier.weight(1f)
-                                                        )
+                                                        TextField(value = payPhonePe, onValueChange = { payPhonePe = it }, label = { Text("PhonePe") }, modifier = Modifier.weight(1f))
+                                                        TextField(value = payCash, onValueChange = { payCash = it }, label = { Text("Cash") }, modifier = Modifier.weight(1f))
                                                     }
+                                                    validationErrors["amountPhonePe"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+                                                    validationErrors["amountCash"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+                                                    validationErrors[""]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
                                                     Button(onClick = {
                                                         scope.launch {
                                                             try {
+                                                                validationErrors = emptyMap()
+                                                                infoMessage = ""
                                                                 val pP = payPhonePe.toDoubleOrNull() ?: 0.0
                                                                 val pC = payCash.toDoubleOrNull() ?: 0.0
-                                                                val resp =
-                                                                    ApiClient.client.post(ApiV1.VisitPay(id = visit.id)) {
-                                                                        url { host = "localhost"; port = 8080 }
-                                                                        contentType(ContentType.Application.Json)
-                                                                        setBody(PaymentRequest(pP, pC))
-                                                                    }
+                                                                val resp = ApiClient.client.post(ApiV1.VisitPay(id = visit.id)) {
+                                                                    url { host = "localhost"; port = 8080 }
+                                                                    contentType(ContentType.Application.Json)
+                                                                    setBody(PaymentRequest(pP, pC))
+                                                                }
                                                                 if (resp.status == HttpStatusCode.OK) {
                                                                     infoMessage = "Clinical fee paid successfully"
                                                                     fetchVisitsForPatient(pat.id)
                                                                 } else {
-                                                                    infoMessage = "Payment failed: ${resp.status}"
+                                                                    handleApiError(resp)
                                                                 }
                                                             } catch (e: Exception) {
                                                                 infoMessage = e.message ?: "Connection error"
@@ -597,10 +538,7 @@ fun App() {
                                         }
 
                                         Spacer(modifier = Modifier.height(4.dp))
-                                        Box(
-                                            modifier = Modifier.fillMaxWidth().background(Color(0xFFDDDDDD))
-                                                .padding(4.dp)
-                                        ) {
+                                        Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFDDDDDD)).padding(4.dp)) {
                                             Column {
                                                 Text("Pharmacy Billing", style = MaterialTheme.typography.labelLarge)
                                                 Text("Medications Cost: Rs. ${visit.pharmacyRequiredAmount} | Paid: PhonePe: Rs. ${visit.pharmacyAmountPhonePe}, Cash: Rs. ${visit.pharmacyAmountCash}")
@@ -609,36 +547,30 @@ fun App() {
                                                     var dispensePhonePe by remember { mutableStateOf("") }
                                                     var dispenseCash by remember { mutableStateOf("") }
                                                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                        TextField(
-                                                            value = dispensePhonePe,
-                                                            onValueChange = { dispensePhonePe = it },
-                                                            label = { Text("PhonePe") },
-                                                            modifier = Modifier.weight(1f)
-                                                        )
-                                                        TextField(
-                                                            value = dispenseCash,
-                                                            onValueChange = { dispenseCash = it },
-                                                            label = { Text("Cash") },
-                                                            modifier = Modifier.weight(1f)
-                                                        )
+                                                        TextField(value = dispensePhonePe, onValueChange = { dispensePhonePe = it }, label = { Text("PhonePe") }, modifier = Modifier.weight(1f))
+                                                        TextField(value = dispenseCash, onValueChange = { dispenseCash = it }, label = { Text("Cash") }, modifier = Modifier.weight(1f))
                                                     }
+                                                    validationErrors["amountPhonePe"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+                                                    validationErrors["amountCash"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+                                                    validationErrors[""]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
                                                     Button(onClick = {
                                                         scope.launch {
                                                             try {
+                                                                validationErrors = emptyMap()
+                                                                infoMessage = ""
                                                                 val dP = dispensePhonePe.toDoubleOrNull() ?: 0.0
                                                                 val dC = dispenseCash.toDoubleOrNull() ?: 0.0
-                                                                val resp =
-                                                                    ApiClient.client.post(ApiV1.VisitDispense(id = visit.id)) {
-                                                                        url { host = "localhost"; port = 8080 }
-                                                                        contentType(ContentType.Application.Json)
-                                                                        setBody(PaymentRequest(dP, dC))
-                                                                    }
+                                                                val resp = ApiClient.client.post(ApiV1.VisitDispense(id = visit.id)) {
+                                                                    url { host = "localhost"; port = 8080 }
+                                                                    contentType(ContentType.Application.Json)
+                                                                    setBody(PaymentRequest(dP, dC))
+                                                                }
                                                                 if (resp.status == HttpStatusCode.OK) {
                                                                     infoMessage = "Pharmacy items dispensed and paid"
                                                                     fetchVisitsForPatient(pat.id)
                                                                     fetchInventory()
                                                                 } else {
-                                                                    infoMessage = "Dispense failed: ${resp.status}"
+                                                                    handleApiError(resp)
                                                                 }
                                                             } catch (e: Exception) {
                                                                 infoMessage = e.message ?: "Connection error"
@@ -655,25 +587,23 @@ fun App() {
                         } ?: Text("Please select a patient first from the Patients tab.")
                     }
                 }
-
                 AppScreen.INVENTORY -> {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text("Add/Update Stock")
-                        TextField(
-                            value = invMedicationName,
-                            onValueChange = { invMedicationName = it },
-                            label = { Text("Medication Name") })
-                        TextField(
-                            value = invQuantity,
-                            onValueChange = { invQuantity = it },
-                            label = { Text("Quantity") })
-                        TextField(
-                            value = invPrice,
-                            onValueChange = { invPrice = it },
-                            label = { Text("Price Per Unit") })
+                        TextField(value = invMedicationName, onValueChange = { invMedicationName = it }, label = { Text("Medication Name") })
+                        validationErrors["medicationName"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+
+                        TextField(value = invQuantity, onValueChange = { invQuantity = it }, label = { Text("Quantity") })
+                        validationErrors["quantity"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+
+                        TextField(value = invPrice, onValueChange = { invPrice = it }, label = { Text("Price Per Unit") })
+                        validationErrors["pricePerUnit"]?.let { Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall) }
+
                         Button(onClick = {
                             scope.launch {
                                 try {
+                                    validationErrors = emptyMap()
+                                    infoMessage = ""
                                     val qty = invQuantity.toIntOrNull() ?: 0
                                     val pr = invPrice.toDoubleOrNull() ?: 0.0
                                     val response = ApiClient.client.post(ApiV1.Inventory()) {
@@ -684,8 +614,9 @@ fun App() {
                                     if (response.status == HttpStatusCode.OK) {
                                         infoMessage = "Stock updated"
                                         fetchInventory()
+                                        invMedicationName = ""; invQuantity = ""; invPrice = ""
                                     } else {
-                                        infoMessage = "Failed to update stock: ${response.status}"
+                                        handleApiError(response)
                                     }
                                 } catch (e: Exception) {
                                     infoMessage = e.message ?: "Connection error"
@@ -694,7 +625,7 @@ fun App() {
                         }) { Text("Update Stock") }
 
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text("Stock Inventory List")
+                        Text("Stock Inventory List (Medication IDs displayed here)")
                         LazyColumn(modifier = Modifier.height(200.dp)) {
                             items(inventoryItemsList) { item ->
                                 Box(modifier = Modifier.fillMaxWidth().border(1.dp, Color.LightGray).padding(8.dp)) {

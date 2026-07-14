@@ -1,21 +1,31 @@
 package org.advgnd.atrium
 
 import kotlinx.serialization.Serializable
+import dev.nesk.akkurate.annotations.Validate
 
 @Serializable
 enum class PaymentStatus {
     PAID, PENDING
 }
 
+@Validate
 @Serializable
 data class AuthRequest(val email: String, val password: String)
 
 @Serializable
+data class ValidationError(val path: String, val message: String)
+
+@Serializable
+data class ValidationErrorsResponse(val errors: List<ValidationError>)
+
+@Serializable
 data class MessageResponse(val message: String)
+
 
 @Serializable
 data class ProfileResponse(val userId: String, val email: String, val roles: List<String>)
 
+@Validate
 @Serializable
 data class PatientRequest(
     val name: String,
@@ -42,6 +52,7 @@ data class VisitAttachment(
     val mediaType: String
 )
 
+@Validate
 @Serializable
 data class VisitRequest(
     val type: String,
@@ -53,7 +64,7 @@ data class VisitRequest(
     val attachments: List<VisitAttachment> = emptyList()
 )
 
-
+@Validate
 @Serializable
 data class InventoryUpdateRequest(
     val medicationName: String,
@@ -61,6 +72,7 @@ data class InventoryUpdateRequest(
     val pricePerUnit: Double
 )
 
+@Validate
 @Serializable
 data class PaymentRequest(
     val amountPhonePe: Double,
