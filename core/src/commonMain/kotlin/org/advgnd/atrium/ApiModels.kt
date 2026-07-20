@@ -32,11 +32,11 @@ data class ProfileResponse(val userId: String, val email: String, val roles: Lis
 @Serializable
 data class PatientRequest(
     val name: String,
-    val dateOfBirth: String,
+    val dateOfBirth: String?,
     val gender: String,
     val contactNumber: String,
-    val email: String,
-    val address: String
+    val village: String,
+    val address: String?
 )
 
 @Serializable

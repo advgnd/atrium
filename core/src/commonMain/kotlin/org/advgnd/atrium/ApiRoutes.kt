@@ -24,7 +24,7 @@ class ApiV1 {
 
     @Serializable
     @Resource("patients")
-    class Patients(val parent: ApiV1 = ApiV1())
+    class Patients(val parent: ApiV1 = ApiV1(), val q: String? = null)
 
     @Serializable
     @Resource("patients/{id}")

@@ -23,11 +23,11 @@ data class DbUser(
 data class DbPatient(
     val id: String,
     val name: String,
-    val dateOfBirth: String,
+    val dateOfBirth: String?,
     val gender: String,
     val contactNumber: String,
-    val email: String,
-    val address: String,
+    val village: String,
+    val address: String?,
     val createdAt: Long
 )
 
@@ -118,11 +118,11 @@ class DatabaseManager(private val database: Database) {
 
     fun createPatient(
         name: String,
-        dateOfBirth: String,
+        dateOfBirth: String?,
         gender: String,
         contactNumber: String,
-        email: String,
-        address: String
+        village: String,
+        address: String?
     ): DbPatient {
         val id = UUID.randomUUID().toString()
         val createdAt = System.currentTimeMillis()
@@ -134,7 +134,7 @@ class DatabaseManager(private val database: Database) {
                 it[Patients.dateOfBirth] = dateOfBirth
                 it[Patients.gender] = gender
                 it[Patients.contactNumber] = contactNumber
-                it[Patients.email] = email
+                it[Patients.village] = village
                 it[Patients.address] = address
                 it[Patients.createdAt] = createdAt
             }
@@ -146,7 +146,7 @@ class DatabaseManager(private val database: Database) {
             dateOfBirth = dateOfBirth,
             gender = gender,
             contactNumber = contactNumber,
-            email = email,
+            village = village,
             address = address,
             createdAt = createdAt
         )
@@ -162,7 +162,7 @@ class DatabaseManager(private val database: Database) {
                         dateOfBirth = row[Patients.dateOfBirth],
                         gender = row[Patients.gender],
                         contactNumber = row[Patients.contactNumber],
-                        email = row[Patients.email],
+                        village = row[Patients.village],
                         address = row[Patients.address],
                         createdAt = row[Patients.createdAt]
                     )
@@ -181,11 +181,35 @@ class DatabaseManager(private val database: Database) {
                         dateOfBirth = row[Patients.dateOfBirth],
                         gender = row[Patients.gender],
                         contactNumber = row[Patients.contactNumber],
-                        email = row[Patients.email],
+                        village = row[Patients.village],
                         address = row[Patients.address],
                         createdAt = row[Patients.createdAt]
                     )
                 }
+        }
+    }
+
+    fun searchPatients(query: String): List<DbPatient> {
+        return transaction(database) {
+            Patients.selectAll().where {
+                (Patients.name like "%$query%") or
+                (Patients.contactNumber like "%$query%") or
+                (Patients.village like "%$query%") or
+                (Patients.address like "%$query%")
+            }
+            .orderBy(Patients.createdAt to SortOrder.DESC)
+            .map { row ->
+                DbPatient(
+                    id = row[Patients.id],
+                    name = row[Patients.name],
+                    dateOfBirth = row[Patients.dateOfBirth],
+                    gender = row[Patients.gender],
+                    contactNumber = row[Patients.contactNumber],
+                    village = row[Patients.village],
+                    address = row[Patients.address],
+                    createdAt = row[Patients.createdAt]
+                )
+            }
         }
     }
 
@@ -387,11 +411,11 @@ class DatabaseManager(private val database: Database) {
     fun updatePatient(
         id: String,
         name: String,
-        dateOfBirth: String,
+        dateOfBirth: String?,
         gender: String,
         contactNumber: String,
-        email: String,
-        address: String
+        village: String,
+        address: String?
     ): DbPatient? {
         transaction(database) {
             Patients.update({ Patients.id eq id }) {
@@ -399,7 +423,7 @@ class DatabaseManager(private val database: Database) {
                 it[Patients.dateOfBirth] = dateOfBirth
                 it[Patients.gender] = gender
                 it[Patients.contactNumber] = contactNumber
-                it[Patients.email] = email
+                it[Patients.village] = village
                 it[Patients.address] = address
             }
         }

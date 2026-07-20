@@ -21,11 +21,11 @@ object Sessions : Table("sessions") {
 object Patients : Table("patients") {
     val id = text("id")
     val name = text("name")
-    val dateOfBirth = text("date_of_birth")
+    val dateOfBirth = text("date_of_birth").nullable()
     val gender = text("gender")
     val contactNumber = text("contact_number")
-    val email = text("email")
-    val address = text("address")
+    val village = text("village")
+    val address = text("address").nullable()
     val createdAt = long("created_at")
     override val primaryKey = PrimaryKey(id)
 }

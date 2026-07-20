@@ -51,20 +51,19 @@ val validatePatient = Validator<PatientRequest> {
     name.isNotEmpty() otherwise { "Name cannot be empty" }
     name.isNotBlank() otherwise { "Name cannot be blank" }
     dateOfBirth.constrain {
-        try {
-            val dob = LocalDate.parse(it)
-            !dob.isAfter(LocalDate.now())
-        } catch (e: DateTimeParseException) {
-            false
+        if (it.isNullOrBlank()) true else {
+            val year = it.toIntOrNull()
+            year != null && it.length == 4 && year >= 1900 && year <= java.time.LocalDate.now().year
         }
-    } otherwise { "Date of Birth must be a valid date in the past (YYYY-MM-DD)" }
+    } otherwise { "Year of Birth must be a valid 4-digit year (e.g. 1995) and not in the future" }
     gender.constrain { it.equals("Male", ignoreCase = true) || it.equals("Female", ignoreCase = true) || it.equals("Other", ignoreCase = true) } otherwise {
         "Gender must be Male, Female, or Other"
     }
     contactNumber.constrain { it.matches(contactRegex) && it.replace(Regex("[^0-9]"), "").length >= 10 } otherwise {
         "Contact number must contain at least 10 digits"
     }
-    email.constrain { it.isBlank() || it.matches(emailRegex) } otherwise { "Invalid email address format" }
+    village.isNotEmpty() otherwise { "Village cannot be empty" }
+    village.isNotBlank() otherwise { "Village cannot be blank" }
 }
 
 val validateVisit = Validator<VisitRequest> {
@@ -251,7 +250,7 @@ fun Application.module() {
                         dateOfBirth = req.dateOfBirth,
                         gender = req.gender,
                         contactNumber = req.contactNumber,
-                        email = req.email,
+                        village = req.village,
                         address = req.address
                     )
                     call.respond(HttpStatusCode.Created, patient)
@@ -260,8 +259,13 @@ fun Application.module() {
                 }
             }
 
-            get<ApiV1.Patients> {
-                val patients = dbManager.getAllPatients()
+            get<ApiV1.Patients> { route ->
+                val query = route.q
+                val patients = if (!query.isNullOrBlank()) {
+                    dbManager.searchPatients(query)
+                } else {
+                    dbManager.getAllPatients()
+                }
                 call.respond(HttpStatusCode.OK, patients)
             }
 
@@ -284,7 +288,7 @@ fun Application.module() {
                         return@put
                     }
                     val updated = dbManager.updatePatient(
-                        route.id, req.name, req.dateOfBirth, req.gender, req.contactNumber, req.email, req.address
+                        route.id, req.name, req.dateOfBirth, req.gender, req.contactNumber, req.village, req.address
                     )
                     if (updated != null) {
                         call.respond(HttpStatusCode.OK, updated)
